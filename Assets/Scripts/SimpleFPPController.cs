@@ -40,17 +40,29 @@ public class SimpleFPPController : MonoBehaviour
 
     [Header("Look / Rotation Settings")]
     public Transform playerCamera;
+    [Tooltip("Optional pivot for vertical pitch in VR. If unassigned, automatically detects camera parent (e.g. Camera Offset).")]
+    public Transform pitchPivot;
     public float mouseSensitivity = 0.5f;
     public float touchSensitivity = 0.012f; // Reduced slightly
     public float joystickLookSensitivity = 60f;
     public float keyboardTurnSpeed = 90f;
+    public float vrTurnSpeed = 90f;
     public bool lockCursorOnDesktop = true;
     public float rotationSmoothTime = 0.08f; // For smooth and stable camera movement
+    [Tooltip("Minimum pitch angle (looking up). Usually negative, e.g. -80")]
+    public float minPitch = -80f;
+    [Tooltip("Maximum pitch angle (looking down). Usually positive, e.g. 80")]
+    public float maxPitch = 80f;
+    [Tooltip("Invert vertical camera look direction")]
+    public bool invertY = false;
 
     [Header("VR Settings")]
     public bool useVRSnapTurn = true;
     public float vrSnapTurnAngle = 45f;
     public float vrSnapTurnCooldown = 0.2f;
+    [Tooltip("Enable snap pitch (instant angle step) instead of smooth pitch in VR")]
+    public bool useVRSnapPitch = false;
+    public float vrSnapPitchAngle = 15f;
 
     private float yaw;
     private float pitch;
@@ -68,6 +80,7 @@ public class SimpleFPPController : MonoBehaviour
     private Vector3 spawnPosition;
     private Quaternion spawnRotation;
     private Quaternion initialCameraRotation = Quaternion.identity;
+    private Quaternion initialPitchPivotRotation = Quaternion.identity;
 
     // State
     private Transform xrOriginRoot;
@@ -75,6 +88,7 @@ public class SimpleFPPController : MonoBehaviour
     private bool prevVRJumpState = false;
     private bool uiJumpTriggered = false;
     private float snapTurnTimer = 0f;
+    private float snapPitchTimer = 0f;
 
     // Touch State
     private int lookTouchFingerId = -1;
@@ -87,6 +101,8 @@ public class SimpleFPPController : MonoBehaviour
         yaw = transform.eulerAngles.y;
         currentYaw = yaw;
 
+        FindXROriginRoot();
+
         if (playerCamera == null && Camera.main != null)
             playerCamera = Camera.main.transform;
 
@@ -95,13 +111,50 @@ public class SimpleFPPController : MonoBehaviour
             initialCameraRotation = playerCamera.localRotation;
             pitch = 0f;
             currentPitch = 0f;
+            FindPitchPivot();
         }
 
         inputActions = new InputSystem_Actions();
-        FindXROriginRoot();
 
         if (GetComponent<StationWalkthrough.ControlsTutorialUI>() == null)
             gameObject.AddComponent<StationWalkthrough.ControlsTutorialUI>();
+    }
+
+    private void FindPitchPivot()
+    {
+        if (pitchPivot != null)
+        {
+            initialPitchPivotRotation = pitchPivot.localRotation;
+            return;
+        }
+
+        if (playerCamera == null) return;
+
+        // If playerCamera has a parent distinct from xrOriginRoot, that parent (such as Camera Offset) is our pitch pivot
+        if (playerCamera.parent != null && playerCamera.parent != xrOriginRoot)
+        {
+            pitchPivot = playerCamera.parent;
+            initialPitchPivotRotation = pitchPivot.localRotation;
+        }
+        else if (isVRActive && playerCamera.parent != null)
+        {
+            // If camera is directly under xrOriginRoot in VR, create a dedicated pitch pivot
+            Transform existing = playerCamera.parent.Find("CameraPitchPivot");
+            if (existing != null)
+            {
+                pitchPivot = existing;
+            }
+            else
+            {
+                GameObject pivotObj = new GameObject("CameraPitchPivot");
+                pivotObj.transform.SetParent(playerCamera.parent, false);
+                pivotObj.transform.localPosition = playerCamera.localPosition;
+                pivotObj.transform.localRotation = Quaternion.identity;
+                playerCamera.SetParent(pivotObj.transform, true);
+                pitchPivot = pivotObj.transform;
+            }
+            initialPitchPivotRotation = pitchPivot.localRotation;
+        }
     }
 
     private void OnEnable()
@@ -169,6 +222,7 @@ public class SimpleFPPController : MonoBehaviour
         if (inputActions.Player.Jump.WasPressedThisFrame()) uiJumpTriggered = true;
 
         if (snapTurnTimer > 0f) snapTurnTimer -= Time.deltaTime;
+        if (snapPitchTimer > 0f) snapPitchTimer -= Time.deltaTime;
 
         HandleRotation();
         HandleMovement();
@@ -230,7 +284,7 @@ public class SimpleFPPController : MonoBehaviour
             lookInput = Vector2.zero;
         }
 
-        // VR Fallback Right Hand
+        // VR Fallback Right Hand (Check both primary2DAxis and secondary2DAxis on the Right Hand controller)
         if (isVRActive && lookInput.sqrMagnitude <= inputDeadzone * inputDeadzone)
         {
             var rightHandDevices = new List<UnityEngine.XR.InputDevice>();
@@ -242,23 +296,50 @@ public class SimpleFPPController : MonoBehaviour
                     lookInput = axis;
                     break;
                 }
+                if (device.TryGetFeatureValue(CommonUsages.secondary2DAxis, out Vector2 secAxis) && secAxis.sqrMagnitude > inputDeadzone * inputDeadzone)
+                {
+                    lookInput = secAxis;
+                    break;
+                }
             }
         }
 
         if (lookInput.sqrMagnitude > inputDeadzone * inputDeadzone)
         {
-            if (isVRActive && useVRSnapTurn)
+            if (isVRActive)
             {
-                if (snapTurnTimer <= 0f && Mathf.Abs(lookInput.x) > 0.5f)
+                // VR Horizontal Look (Yaw): Snap Turn or Smooth Turn
+                if (useVRSnapTurn)
                 {
-                    lookX += Mathf.Sign(lookInput.x) * vrSnapTurnAngle;
-                    snapTurnTimer = vrSnapTurnCooldown;
+                    if (snapTurnTimer <= 0f && Mathf.Abs(lookInput.x) > 0.5f)
+                    {
+                        lookX += Mathf.Sign(lookInput.x) * vrSnapTurnAngle;
+                        snapTurnTimer = vrSnapTurnCooldown;
+                    }
+                }
+                else
+                {
+                    lookX += lookInput.x * vrTurnSpeed * Time.deltaTime;
+                }
+
+                // VR Vertical Look (Pitch): Snap Pitch or Smooth Pitch
+                if (useVRSnapPitch)
+                {
+                    if (snapPitchTimer <= 0f && Mathf.Abs(lookInput.y) > 0.5f)
+                    {
+                        lookY += Mathf.Sign(lookInput.y) * vrSnapPitchAngle;
+                        snapPitchTimer = vrSnapTurnCooldown;
+                    }
+                }
+                else
+                {
+                    lookY += lookInput.y * vrTurnSpeed * Time.deltaTime;
                 }
             }
             else
             {
                 lookX += lookInput.x * keyboardTurnSpeed * Time.deltaTime;
-                if (!isVRActive) lookY += lookInput.y * keyboardTurnSpeed * Time.deltaTime;
+                lookY += lookInput.y * keyboardTurnSpeed * Time.deltaTime;
             }
         }
 
@@ -267,11 +348,8 @@ public class SimpleFPPController : MonoBehaviour
         {
             if (Keyboard.current.rightArrowKey.isPressed) lookX += keyboardTurnSpeed * Time.deltaTime;
             if (Keyboard.current.leftArrowKey.isPressed) lookX -= keyboardTurnSpeed * Time.deltaTime;
-            if (!isVRActive)
-            {
-                if (Keyboard.current.upArrowKey.isPressed) lookY += keyboardTurnSpeed * Time.deltaTime;
-                if (Keyboard.current.downArrowKey.isPressed) lookY -= keyboardTurnSpeed * Time.deltaTime;
-            }
+            if (Keyboard.current.upArrowKey.isPressed) lookY += keyboardTurnSpeed * Time.deltaTime;
+            if (Keyboard.current.downArrowKey.isPressed) lookY -= keyboardTurnSpeed * Time.deltaTime;
         }
 
         // 3. Virtual Look Joystick (Right Joystick)
@@ -279,9 +357,8 @@ public class SimpleFPPController : MonoBehaviour
         {
             if (lookJoystick.Direction.sqrMagnitude > inputDeadzone * inputDeadzone)
             {
-                // Only process horizontal (X) axis for looking left/right
                 lookX += lookJoystick.Direction.x * joystickLookSensitivity * Time.deltaTime;
-                // Ignored lookY entirely to prevent accidental up/down
+                lookY += lookJoystick.Direction.y * joystickLookSensitivity * Time.deltaTime;
             }
         }
 
@@ -318,9 +395,9 @@ public class SimpleFPPController : MonoBehaviour
                         Vector2 delta = touch.screenPosition - lastLookTouchPos;
                         lastLookTouchPos = touch.screenPosition;
 
-                        // Only apply horizontal rotation (left/right).
+                        // Apply both horizontal (yaw) and vertical (pitch) rotation
                         lookX += delta.x * touchSensitivity;
-                        // lookY is intentionally ignored to prevent up/down rotation on mobile
+                        lookY += delta.y * touchSensitivity;
                     }
                     else if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
                     {
@@ -354,8 +431,9 @@ public class SimpleFPPController : MonoBehaviour
 
         yaw += lookX;
 
-        // Hardcode pitch to 0 to completely prevent up/down vertical movement and rolling
-        pitch = 0f;
+        // Apply pitch (clamped to prevent camera flip)
+        float yDelta = invertY ? -lookY : lookY;
+        pitch = Mathf.Clamp(pitch - yDelta, minPitch, maxPitch);
 
         if (isVRActive)
         {
@@ -363,9 +441,20 @@ public class SimpleFPPController : MonoBehaviour
             currentPitch = pitch;
             Transform rotTarget = xrOriginRoot != null ? xrOriginRoot : transform;
             rotTarget.rotation = Quaternion.Euler(0f, currentYaw, 0f);
+
+            if (pitchPivot != null)
+            {
+                pitchPivot.localRotation = initialPitchPivotRotation * Quaternion.Euler(currentPitch, 0f, 0f);
+            }
         }
         else
         {
+            // Restore pitchPivot if returning to Non-VR
+            if (pitchPivot != null && pitchPivot.localRotation != initialPitchPivotRotation)
+            {
+                pitchPivot.localRotation = initialPitchPivotRotation;
+            }
+
             // Apply smoothing for mobile/desktop
             currentYaw = Mathf.SmoothDamp(currentYaw, yaw, ref yawVelocity, rotationSmoothTime);
             currentPitch = Mathf.SmoothDamp(currentPitch, pitch, ref pitchVelocity, rotationSmoothTime);
@@ -554,6 +643,10 @@ public class SimpleFPPController : MonoBehaviour
         {
             if (playerCamera == transform) playerCamera.localRotation = initialCameraRotation * Quaternion.Euler(0f, currentYaw, 0f);
             else playerCamera.localRotation = initialCameraRotation;
+        }
+        if (pitchPivot != null)
+        {
+            pitchPivot.localRotation = initialPitchPivotRotation;
         }
     }
 

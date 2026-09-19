@@ -135,7 +135,7 @@ namespace StationWalkthrough
                 tutorialText.text =
                     $"<b><size={titleFontSize}>🥽 VR CONTROLS & CAUTION</size></b>\n\n" +
                     "• <b>Move:</b> Left Thumbstick (Camera-relative walk)\n" +
-                    "• <b>Rotate / Turn:</b> Right Thumbstick (or turn head)\n" +
+                    "• <b>Rotate / Look:</b> Right Thumbstick (Left/Right turn, Up/Down pitch, or turn head)\n" +
                     "• <b>Jump:</b> 'A' Button (Right hand) or 'X' Button (Left hand)\n" +
                     "• <b>Sprint:</b> Hold 'Y' Button or Left Grip Trigger\n\n" +
                     "<b><color=#FFA500>⚠️ CAUTION & SAFETY:</color></b>\n" +
@@ -147,7 +147,7 @@ namespace StationWalkthrough
                 tutorialText.text =
                     $"<b><size={titleFontSize}>📱 MOBILE TOUCH CONTROLS & CAUTION</size></b>\n\n" +
                     "• <b>Move:</b> Drag Virtual Joystick on the bottom-left\n" +
-                    "• <b>Rotate / Look:</b> Swipe & drag across the right side of the screen\n" +
+                    "• <b>Rotate / Look:</b> Swipe & drag across right screen or Look Joystick (Horizontal & Vertical)\n" +
                     "• <b>Jump:</b> Tap the Jump Button on the bottom-right\n\n" +
                     "<b><color=#FFA500>⚠️ CAUTION:</color></b>\n" +
                     "1. Controls automatically switch to VR mode when a headset is connected.\n" +

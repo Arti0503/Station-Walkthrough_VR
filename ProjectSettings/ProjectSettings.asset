@@ -151,6 +151,7 @@ PlayerSettings:
   tvOSBundleVersion: 1.0
   bundleVersion: 1.0
   preloadedAssets:
+  - {fileID: 141870681266154980, guid: 4fcee6e9b0bb909498e61134c3832957, type: 2}
   - {fileID: -986104461342017666, guid: 7e6b676cb7fbeac4ba4e6a813fcde4a2, type: 2}
   metroInputSource: 0
   wsaTransparentSwapchain: 0
@@ -629,7 +630,9 @@ PlayerSettings:
   webWasm2023: 1
   webEnableSubmoduleStrippingCompatibility: 0
   webProgressiveAssetLoading: 0
-  scriptingDefineSymbols: {}
+  scriptingDefineSymbols:
+    Android: USE_INPUT_SYSTEM_POSE_CONTROL;USE_STICK_CONTROL_THUMBSTICKS
+    Standalone: USE_INPUT_SYSTEM_POSE_CONTROL;USE_STICK_CONTROL_THUMBSTICKS
   additionalCompilerArguments: {}
   platformArchitecture: {}
   scriptingBackend: {}

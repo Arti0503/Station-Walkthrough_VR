@@ -36,7 +36,28 @@ namespace StationWalkthrough
             int fps = (int)targetFPS;
 
             // 1. Lock Target Frame Rate
-            QualitySettings.vSyncCount = 0; // Disable VSync so Application.targetFrameRate takes effect
+            bool isVR = XRSettings.isDeviceActive;
+            try
+            {
+                if (UnityEngine.XR.Management.XRGeneralSettings.Instance != null &&
+                    UnityEngine.XR.Management.XRGeneralSettings.Instance.Manager != null &&
+                    UnityEngine.XR.Management.XRGeneralSettings.Instance.Manager.activeLoader != null)
+                {
+                    isVR = true;
+                }
+            }
+            catch { }
+
+            if (!isVR && Application.platform != RuntimePlatform.Android)
+            {
+                QualitySettings.vSyncCount = 0; // Disable VSync on desktop non-VR so Application.targetFrameRate takes effect
+            }
+            else
+            {
+                // In VR and Android, compositor swapchain sync is required to prevent black-frame flickering and tearing
+                QualitySettings.vSyncCount = 1;
+            }
+
             Application.targetFrameRate = fps;
 
             // 2. Align Fixed Physics Step with Target FPS (1/90s = 0.01111s, 1/120s = 0.00833s)
@@ -47,7 +68,7 @@ namespace StationWalkthrough
             }
 
             // 3. Apply VR-Specific Optimizations
-            if (XRSettings.isDeviceActive)
+            if (isVR)
             {
                 ApplyVROptimizations(fps);
             }
@@ -55,15 +76,25 @@ namespace StationWalkthrough
             // 4. Optimize Garbage Collector
             System.GC.Collect();
 
-            Debug.Log($"[PerformanceOptimizer] Target Frame Rate locked to {fps} FPS. Fixed Timestep set to {Time.fixedDeltaTime:F5}s. VR Active: {XRSettings.isDeviceActive}");
+            Debug.Log($"[PerformanceOptimizer] Target Frame Rate set to {fps} FPS (vSync: {QualitySettings.vSyncCount}). Fixed Timestep: {Time.fixedDeltaTime:F5}s. VR Active: {isVR}");
         }
 
         private void ApplyVROptimizations(int fps)
         {
-            // 1. Set eye texture resolution scale — prevents the runtime from downscaling,
-            // which was a contributing factor to the blurry/flickery visuals in VR
-            XRSettings.eyeTextureResolutionScale = vrEyeTextureResolutionScale;
-            Debug.Log($"[PerformanceOptimizer] VR Eye Texture Resolution Scale: {vrEyeTextureResolutionScale}");
+            // 1. Set eye texture resolution scale safely
+            try
+            {
+                if (XRSettings.isDeviceActive)
+                {
+                    XRSettings.eyeTextureResolutionScale = vrEyeTextureResolutionScale;
+                    XRSettings.renderViewportScale = 1.0f;
+                    Debug.Log($"[PerformanceOptimizer] VR Eye Texture Resolution Scale: {vrEyeTextureResolutionScale}");
+                }
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[PerformanceOptimizer] Could not set eyeTextureResolutionScale: {e.Message}");
+            }
 
             // 2. Request the target refresh rate on Quest hardware.
             // Application.targetFrameRate (set above) is respected by the Quest runtime.

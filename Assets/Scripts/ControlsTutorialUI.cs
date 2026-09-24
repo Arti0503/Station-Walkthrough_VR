@@ -40,13 +40,11 @@ namespace StationWalkthrough
 
         private void Start()
         {
-            controller = FindFirstObjectByType<SimpleFPPController>();
-            if (controller == null)
-            {
-#if !UNITY_2023_1_OR_NEWER
-                controller = FindObjectOfType<SimpleFPPController>();
+#if UNITY_2023_1_OR_NEWER
+            controller = FindAnyObjectByType<SimpleFPPController>();
+#else
+            controller = FindObjectOfType<SimpleFPPController>();
 #endif
-            }
 
             isVR = controller != null && controller.CheckIsVRActive();
 
@@ -133,14 +131,15 @@ namespace StationWalkthrough
             if (isVR)
             {
                 tutorialText.text =
-                    $"<b><size={titleFontSize}>🥽 VR CONTROLS & CAUTION</size></b>\n\n" +
-                    "• <b>Move:</b> Left Thumbstick (Camera-relative walk)\n" +
-                    "• <b>Rotate / Look:</b> Right Thumbstick (Left/Right turn, Up/Down pitch, or turn head)\n" +
-                    "• <b>Jump:</b> 'A' Button (Right hand) or 'X' Button (Left hand)\n" +
-                    "• <b>Sprint:</b> Hold 'Y' Button or Left Grip Trigger\n\n" +
+                    $"<b><size={titleFontSize}>🥽 VR CONTROLLER GUIDE (L & R)</size></b>\n\n" +
+                    "• <b>[L] Left Controller Thumbstick:</b> Move & Strafe (Walk where you look)\n" +
+                    "• <b>[R] Right Controller Thumbstick:</b> Turn Left / Right (Snap or Smooth turn)\n" +
+                    "• <b>Sprint:</b> Squeeze Left Grip Trigger or click Left Thumbstick\n" +
+                    "• <b>Jump:</b> Press 'A' Button (Right hand) or 'X' Button (Left hand)\n" +
+                    "• <b>Reset Position:</b> Hold Menu button or click both thumbsticks\n\n" +
                     "<b><color=#FFA500>⚠️ CAUTION & SAFETY:</color></b>\n" +
-                    "1. Ensure you have a clear guardian boundary before moving.\n" +
-                    "2. If experiencing motion sickness, pause or rest immediately.";
+                    "1. Ensure you have an active guardian boundary before moving.\n" +
+                    "2. If experiencing disorientation or motion sickness, pause or rest immediately.";
             }
             else
             {
@@ -164,7 +163,7 @@ namespace StationWalkthrough
             if (canvas == null)
             {
 #if UNITY_2023_1_OR_NEWER
-                canvas = FindFirstObjectByType<Canvas>();
+                canvas = FindAnyObjectByType<Canvas>();
 #else
                 canvas = FindObjectOfType<Canvas>();
 #endif

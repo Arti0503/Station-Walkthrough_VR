@@ -2,3 +2,6 @@
 /Assets/ShivajinagerToPCMC/FBX_And_Material_And_Texture/Khadki_Metro_Station/FBX/Khadki_Metro_Station.fbx filter=lfs diff=lfs merge=lfs -text
 /Assets/vanaz[[:space:]]to[[:space:]]ramwadi/FBX_And_Material_And_Texture/Ramwadi[[:space:]]To[[:space:]]Vanaz[[:space:]]Stations/Ramwadi_Metro_Station/Fbx/Ramwadi_Metro_Station1.fbx filter=lfs diff=lfs merge=lfs -text
 /Assets/3D_Model/Metro_Station_with_Textures.glb filter=lfs diff=lfs merge=lfs -text
+/Assets/3D_Model/Metro_Station_Export/Metro_Station_with_Textures.glb filter=lfs diff=lfs merge=lfs -text
+*.glb filter=lfs diff=lfs merge=lfs -text
+

@@ -2227,7 +2227,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2544406576660317435, guid: a1e8bbbc17c7fa44a83022753b289696, type: 3}
       propertyPath: controlMode
-      value: 2
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 2544406576660317435, guid: a1e8bbbc17c7fa44a83022753b289696, type: 3}
       propertyPath: mobileUICanvas

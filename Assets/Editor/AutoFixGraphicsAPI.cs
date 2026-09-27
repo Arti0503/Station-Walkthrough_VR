@@ -34,13 +34,12 @@ namespace StationWalkthrough.Editor
                 if (api == GraphicsDeviceType.Vulkan) hasVulkan = true;
             }
 
-            // We only want OpenGLES3, or at least OpenGLES3 first and NO Vulkan.
-            // Vulkan is the #1 cause of black screens on URP mobile builds.
-            if (hasVulkan || !hasGLES3 || (apis.Length > 0 && apis[0] != GraphicsDeviceType.OpenGLES3))
+            // Ensure at least Vulkan or OpenGLES3 is configured
+            if (!hasVulkan && !hasGLES3)
             {
-                PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { GraphicsDeviceType.OpenGLES3 });
+                PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { GraphicsDeviceType.Vulkan, GraphicsDeviceType.OpenGLES3 });
                 changed = true;
-                Debug.Log("[AutoFixGraphicsAPI] Safely removed Vulkan and switched Android Graphics API to OpenGLES3 to prevent black screens.");
+                Debug.Log("[AutoFixGraphicsAPI] Configured Android Graphics APIs to Vulkan with OpenGLES3 fallback.");
             }
 
             if (changed)

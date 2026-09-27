@@ -132,8 +132,9 @@ namespace StationWalkthrough
             {
                 tutorialText.text =
                     $"<b><size={titleFontSize}>🥽 VR CONTROLLER GUIDE (L & R)</size></b>\n\n" +
-                    "• <b>[L] Left Controller Thumbstick:</b> Move & Strafe (Walk where you look)\n" +
+                    "• <b>[L] Left Controller Thumbstick:</b> Move & Strafe (Forward/Back + Left/Right)\n" +
                     "• <b>[R] Right Controller Thumbstick:</b> Turn Left / Right (Snap or Smooth turn)\n" +
+                    "• <b>[R] Right Stick Up / Down:</b> Look Up / Down (Optional camera pitch)\n" +
                     "• <b>Sprint:</b> Squeeze Left Grip Trigger or click Left Thumbstick\n" +
                     "• <b>Jump:</b> Press 'A' Button (Right hand) or 'X' Button (Left hand)\n" +
                     "• <b>Reset Position:</b> Hold Menu button or click both thumbsticks\n\n" +

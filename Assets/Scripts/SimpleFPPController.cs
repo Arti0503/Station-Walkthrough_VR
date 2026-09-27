@@ -56,14 +56,26 @@ public class SimpleFPPController : MonoBehaviour
     public bool invertY = false;
 
     [Header("VR Settings")]
+    public Transform pitchPivot;
+    public float vrTurnSpeed = 90f;
+    public bool vrHeadOrientedMovement = true;
     public bool useVRSnapTurn = true;
     public float vrSnapTurnAngle = 45f;
+    public float vrSnapTurnThreshold = 0.5f;
+    public float vrSnapTurnRepeatDelay = 0.4f;
     public float vrSnapTurnCooldown = 0.2f;
+
+    [Header("VR Optional Vertical Look (Right Stick Up/Down)")]
+    [Tooltip("Allow Right Controller Joystick up/down to tilt camera view vertically in VR (Optional)")]
+    public bool enableVRVerticalLook = false;
+    [Tooltip("Legacy serialized field alias for vertical look in VR")]
+    public bool enableVRPitchControl = false;
+    public bool useVRSnapPitch = false;
+    public float vrSnapPitchAngle = 15f;
 
     [Header("VR Controller Anchors")]
     public Transform leftControllerAnchor;
     public Transform rightControllerAnchor;
-    public bool vrHeadOrientedMovement = true;
     public bool autoCreateControllerAnchors = false;
 
     private float yaw;
@@ -82,6 +94,7 @@ public class SimpleFPPController : MonoBehaviour
     private Vector3 spawnPosition;
     private Quaternion spawnRotation;
     private Quaternion initialCameraRotation = Quaternion.identity;
+    private Quaternion initialPitchPivotRotation = Quaternion.identity;
 
     // State
     private Transform xrOriginRoot;
@@ -89,6 +102,7 @@ public class SimpleFPPController : MonoBehaviour
     private bool prevVRJumpState = false;
     private bool uiJumpTriggered = false;
     private float snapTurnTimer = 0f;
+    private float snapPitchTimer = 0f;
 
     // Touch State
     private int lookTouchFingerId = -1;
@@ -111,8 +125,14 @@ public class SimpleFPPController : MonoBehaviour
             currentPitch = 0f;
         }
 
+        // Sync vertical look aliases
+        if (enableVRPitchControl) enableVRVerticalLook = true;
+        else if (enableVRVerticalLook) enableVRPitchControl = true;
+
         inputActions = new InputSystem_Actions();
         FindXROriginRoot();
+        FindControllerAnchors();
+        SetupPitchPivot();
 
         if (GetComponent<StationWalkthrough.ControlsTutorialUI>() == null)
             gameObject.AddComponent<StationWalkthrough.ControlsTutorialUI>();
@@ -194,6 +214,7 @@ public class SimpleFPPController : MonoBehaviour
         if (inputActions.Player.Jump.WasPressedThisFrame()) uiJumpTriggered = true;
 
         if (snapTurnTimer > 0f) snapTurnTimer -= Time.deltaTime;
+        if (snapPitchTimer > 0f) snapPitchTimer -= Time.deltaTime;
 
         HandleRotation();
         HandleMovement();
@@ -220,6 +241,12 @@ public class SimpleFPPController : MonoBehaviour
             Camera cam = playerCamera.GetComponent<Camera>();
             if (cam != null) cam.stereoTargetEye = isVRActive ? StereoTargetEyeMask.Both : StereoTargetEyeMask.None;
         }
+
+        if (isVRActive)
+        {
+            FindControllerAnchors();
+            SetupPitchPivot();
+        }
     }
 
     private void FindXROriginRoot()
@@ -240,6 +267,65 @@ public class SimpleFPPController : MonoBehaviour
         xrOriginRoot = transform;
     }
 
+    private void FindControllerAnchors()
+    {
+        if (leftControllerAnchor == null || rightControllerAnchor == null)
+        {
+            Transform searchRoot = xrOriginRoot != null ? xrOriginRoot : transform;
+            var allTransforms = searchRoot.GetComponentsInChildren<Transform>(true);
+            foreach (var t in allTransforms)
+            {
+                string n = t.name.ToLower();
+                if (leftControllerAnchor == null && n.Contains("left") && n.Contains("controller"))
+                    leftControllerAnchor = t;
+                if (rightControllerAnchor == null && n.Contains("right") && n.Contains("controller"))
+                    rightControllerAnchor = t;
+            }
+        }
+    }
+
+    private void SetupPitchPivot()
+    {
+        if (playerCamera == null && Camera.main != null)
+            playerCamera = Camera.main.transform;
+
+        if (playerCamera == null) return;
+
+        if (pitchPivot == null)
+        {
+            if (playerCamera.parent != null && playerCamera.parent.name.Contains("Pitch"))
+            {
+                pitchPivot = playerCamera.parent;
+            }
+            else if (isVRActive && playerCamera.parent != null)
+            {
+                Transform existing = playerCamera.parent.Find("CameraPitchPivot");
+                if (existing != null)
+                {
+                    pitchPivot = existing;
+                }
+                else
+                {
+                    // Create dedicated CameraPitchPivot between Camera Offset and Main Camera
+                    // This allows tilting the camera up/down in VR without tilting the controller anchors
+                    GameObject pivotObj = new GameObject("CameraPitchPivot");
+                    pivotObj.transform.SetParent(playerCamera.parent, false);
+                    pivotObj.transform.localPosition = playerCamera.localPosition;
+                    pivotObj.transform.localRotation = Quaternion.identity;
+                    pivotObj.transform.localScale = Vector3.one;
+
+                    playerCamera.SetParent(pivotObj.transform, true);
+                    pitchPivot = pivotObj.transform;
+                }
+            }
+        }
+
+        if (pitchPivot != null)
+        {
+            initialPitchPivotRotation = pitchPivot.localRotation;
+        }
+    }
+
     private void HandleRotation()
     {
         float lookX = 0f;
@@ -255,7 +341,7 @@ public class SimpleFPPController : MonoBehaviour
             lookInput = Vector2.zero;
         }
 
-        // VR Fallback Right Hand
+        // VR Fallback Right Hand (Check both primary2DAxis and secondary2DAxis on the Right Hand controller)
         if (isVRActive && lookInput.sqrMagnitude <= inputDeadzone * inputDeadzone)
         {
             var rightHandDevices = new List<UnityEngine.XR.InputDevice>();
@@ -267,23 +353,67 @@ public class SimpleFPPController : MonoBehaviour
                     lookInput = axis;
                     break;
                 }
+                if (device.TryGetFeatureValue(CommonUsages.secondary2DAxis, out Vector2 secAxis) && secAxis.sqrMagnitude > inputDeadzone * inputDeadzone)
+                {
+                    lookInput = secAxis;
+                    break;
+                }
             }
         }
 
+        // Process Right Joystick (VR Right Thumbstick / Gamepad Right Stick)
         if (lookInput.sqrMagnitude > inputDeadzone * inputDeadzone)
         {
-            if (isVRActive && useVRSnapTurn)
+            if (isVRActive)
             {
-                if (snapTurnTimer <= 0f && Mathf.Abs(lookInput.x) > 0.5f)
+                float repeatDelay = vrSnapTurnRepeatDelay > 0f ? vrSnapTurnRepeatDelay : vrSnapTurnCooldown;
+
+                // --- VR Horizontal Look (Yaw): Turn Left / Right ---
+                if (useVRSnapTurn)
                 {
-                    lookX += Mathf.Sign(lookInput.x) * vrSnapTurnAngle;
-                    snapTurnTimer = vrSnapTurnCooldown;
+                    if (snapTurnTimer <= 0f && Mathf.Abs(lookInput.x) >= vrSnapTurnThreshold)
+                    {
+                        lookX += Mathf.Sign(lookInput.x) * vrSnapTurnAngle;
+                        snapTurnTimer = repeatDelay;
+                    }
+                    else if (Mathf.Abs(lookInput.x) < vrSnapTurnThreshold * 0.5f)
+                    {
+                        snapTurnTimer = 0f;
+                    }
+                }
+                else
+                {
+                    // Smooth horizontal turn
+                    lookX += lookInput.x * vrTurnSpeed * Time.deltaTime;
+                }
+
+                // --- VR Vertical Look (Pitch): Optional Camera Up / Down ---
+                if (enableVRVerticalLook || enableVRPitchControl)
+                {
+                    if (useVRSnapPitch)
+                    {
+                        if (snapPitchTimer <= 0f && Mathf.Abs(lookInput.y) >= vrSnapTurnThreshold)
+                        {
+                            lookY += Mathf.Sign(lookInput.y) * vrSnapPitchAngle;
+                            snapPitchTimer = repeatDelay;
+                        }
+                        else if (Mathf.Abs(lookInput.y) < vrSnapTurnThreshold * 0.5f)
+                        {
+                            snapPitchTimer = 0f;
+                        }
+                    }
+                    else
+                    {
+                        // Smooth vertical look
+                        lookY += lookInput.y * vrTurnSpeed * Time.deltaTime;
+                    }
                 }
             }
             else
             {
+                // Non-VR Gamepad
                 lookX += lookInput.x * keyboardTurnSpeed * Time.deltaTime;
-                if (!isVRActive) lookY += lookInput.y * keyboardTurnSpeed * Time.deltaTime;
+                lookY += lookInput.y * keyboardTurnSpeed * Time.deltaTime;
             }
         }
 
@@ -292,14 +422,14 @@ public class SimpleFPPController : MonoBehaviour
         {
             if (Keyboard.current.rightArrowKey.isPressed) lookX += keyboardTurnSpeed * Time.deltaTime;
             if (Keyboard.current.leftArrowKey.isPressed) lookX -= keyboardTurnSpeed * Time.deltaTime;
-            if (!isVRActive)
+            if (!isVRActive || enableVRVerticalLook || enableVRPitchControl)
             {
                 if (Keyboard.current.upArrowKey.isPressed) lookY += keyboardTurnSpeed * Time.deltaTime;
                 if (Keyboard.current.downArrowKey.isPressed) lookY -= keyboardTurnSpeed * Time.deltaTime;
             }
         }
 
-        // 3. Virtual Look Joystick (Right Joystick)
+        // 3. Virtual Look Joystick (Right Joystick on Mobile)
         if (!isVRActive && lookJoystick != null && lookJoystick.gameObject.activeInHierarchy)
         {
             if (lookJoystick.Direction.sqrMagnitude > inputDeadzone * inputDeadzone)
@@ -392,12 +522,23 @@ public class SimpleFPPController : MonoBehaviour
         if (isVRActive)
         {
             currentYaw = yaw; // Keep VR snap turning instant to prevent motion sickness
-            currentPitch = pitch;
+            currentPitch = (enableVRVerticalLook || enableVRPitchControl) ? pitch : 0f;
+
             Transform rotTarget = xrOriginRoot != null ? xrOriginRoot : transform;
             rotTarget.rotation = Quaternion.Euler(0f, currentYaw, 0f);
+
+            if (pitchPivot != null)
+            {
+                pitchPivot.localRotation = initialPitchPivotRotation * Quaternion.Euler(currentPitch, 0f, 0f);
+            }
         }
         else
         {
+            if (pitchPivot != null && pitchPivot.localRotation != initialPitchPivotRotation)
+            {
+                pitchPivot.localRotation = initialPitchPivotRotation;
+            }
+
             // Apply smoothing for mobile/desktop
             if (rotationSmoothTime > 0f)
             {
@@ -452,9 +593,10 @@ public class SimpleFPPController : MonoBehaviour
             if (inputActions.Player.Sprint.IsPressed()) isSprinting = true;
         }
 
-        // 3. VR Fallbacks (Left Hand Move, Both Hands Jump)
+        // 3. VR Controller Input (Left Stick Move & Strafe, Sprint, Jump, Reset)
         if (isVRActive)
         {
+            // Left Controller Thumbstick Move: forward/backward (Y) + left/right strafe (X)
             if (input == Vector2.zero)
             {
                 var leftHandDevices = new List<UnityEngine.XR.InputDevice>();
@@ -466,9 +608,25 @@ public class SimpleFPPController : MonoBehaviour
                         input = axis;
                         break;
                     }
+                    if (device.TryGetFeatureValue(CommonUsages.secondary2DAxis, out Vector2 secAxis) && secAxis.sqrMagnitude > inputDeadzone * inputDeadzone)
+                    {
+                        input = secAxis;
+                        break;
+                    }
                 }
             }
 
+            // Left Hand Sprint (Left Stick Click or Left Grip Trigger)
+            var leftDevices = new List<UnityEngine.XR.InputDevice>();
+            InputDevices.GetDevicesAtXRNode(XRNode.LeftHand, leftDevices);
+            foreach (var device in leftDevices)
+            {
+                if (device.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out bool stickClick) && stickClick) isSprinting = true;
+                if (device.TryGetFeatureValue(CommonUsages.gripButton, out bool gripBtn) && gripBtn) isSprinting = true;
+                if (device.TryGetFeatureValue(CommonUsages.grip, out float gripVal) && gripVal > 0.5f) isSprinting = true;
+            }
+
+            // Jump Buttons: 'A' (Right Hand) or 'X' (Left Hand)
             bool vrJump = false;
             var allHands = new List<UnityEngine.XR.InputDevice>();
             InputDevices.GetDevicesAtXRNode(XRNode.RightHand, allHands);
@@ -480,6 +638,26 @@ public class SimpleFPPController : MonoBehaviour
             }
             if (vrJump && !prevVRJumpState) jumpPressed = true;
             prevVRJumpState = vrJump;
+
+            // Dual Stick Click or Menu Button to Reset Position
+            bool leftStickClick = false;
+            bool rightStickClick = false;
+            bool menuPress = false;
+            foreach (var d in leftDevices)
+            {
+                if (d.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out bool c) && c) leftStickClick = true;
+                if (d.TryGetFeatureValue(CommonUsages.menuButton, out bool m) && m) menuPress = true;
+            }
+            var rightDevices = new List<UnityEngine.XR.InputDevice>();
+            InputDevices.GetDevicesAtXRNode(XRNode.RightHand, rightDevices);
+            foreach (var d in rightDevices)
+            {
+                if (d.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out bool c) && c) rightStickClick = true;
+            }
+            if ((leftStickClick && rightStickClick) || menuPress)
+            {
+                ResetPosition();
+            }
         }
 
         // 4. Mobile Joystick
@@ -502,16 +680,31 @@ public class SimpleFPPController : MonoBehaviour
         Vector3 bodyForward;
         Vector3 bodyRight;
 
-        if (isVRActive && playerCamera != null)
+        if (isVRActive)
         {
-            // In VR, push forward based on where the headset is facing
-            bodyForward = playerCamera.forward;
-            bodyForward.y = 0f;
-            if (bodyForward.sqrMagnitude < 0.001f) bodyForward = Vector3.forward; else bodyForward.Normalize();
+            // In VR, push forward based on where the headset is facing (or controller if orientation is customized)
+            Transform orientationRef = (vrHeadOrientedMovement || leftControllerAnchor == null) ? playerCamera : leftControllerAnchor;
 
-            bodyRight = playerCamera.right;
-            bodyRight.y = 0f;
-            if (bodyRight.sqrMagnitude < 0.001f) bodyRight = Vector3.right; else bodyRight.Normalize();
+            if (orientationRef != null)
+            {
+                bodyForward = orientationRef.forward;
+                bodyForward.y = 0f;
+                if (bodyForward.sqrMagnitude < 0.001f) bodyForward = Vector3.forward; else bodyForward.Normalize();
+
+                bodyRight = orientationRef.right;
+                bodyRight.y = 0f;
+                if (bodyRight.sqrMagnitude < 0.001f) bodyRight = Vector3.right; else bodyRight.Normalize();
+            }
+            else
+            {
+                bodyForward = transform.forward;
+                bodyForward.y = 0f;
+                if (bodyForward.sqrMagnitude < 0.001f) bodyForward = Vector3.forward; else bodyForward.Normalize();
+
+                bodyRight = transform.right;
+                bodyRight.y = 0f;
+                if (bodyRight.sqrMagnitude < 0.001f) bodyRight = Vector3.right; else bodyRight.Normalize();
+            }
         }
         else
         {
@@ -597,6 +790,10 @@ public class SimpleFPPController : MonoBehaviour
         {
             if (playerCamera == transform) playerCamera.localRotation = initialCameraRotation * Quaternion.Euler(0f, currentYaw, 0f);
             else playerCamera.localRotation = initialCameraRotation;
+        }
+        if (pitchPivot != null)
+        {
+            pitchPivot.localRotation = initialPitchPivotRotation;
         }
     }
 

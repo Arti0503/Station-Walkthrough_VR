@@ -56,25 +56,26 @@ public class FixVRBlackScreen
                     Debug.Log("[VR Fix] Fixed: Removed ARCore loader from Android to prevent VR conflicts.");
                     requiresSave = true;
                 }
-                
-                // Prioritize Oculus Loader for stability on Quest, remove OpenXR to avoid duplicate conflicts if not configured properly
-                if (XRPackageMetadataStore.IsLoaderAssigned(OpenXRLoaderID, BuildTargetGroup.Android))
+
+                // Remove legacy Oculus Loader if present (deprecated in Unity 6, superseded by OpenXR)
+                if (XRPackageMetadataStore.IsLoaderAssigned(OculusLoaderID, BuildTargetGroup.Android))
                 {
-                    XRPackageMetadataStore.RemoveLoader(settingsManager, OpenXRLoaderID, BuildTargetGroup.Android);
-                    Debug.Log("[VR Fix] Fixed: Removed OpenXR loader (prioritizing native Oculus loader for stability).");
+                    XRPackageMetadataStore.RemoveLoader(settingsManager, OculusLoaderID, BuildTargetGroup.Android);
+                    Debug.Log("[VR Fix] Fixed: Removed legacy Oculus loader in favor of standard OpenXR.");
                     requiresSave = true;
                 }
 
-                if (!XRPackageMetadataStore.IsLoaderAssigned(OculusLoaderID, BuildTargetGroup.Android))
+                // Ensure OpenXR loader is assigned for Android
+                if (!XRPackageMetadataStore.IsLoaderAssigned(OpenXRLoaderID, BuildTargetGroup.Android))
                 {
-                    if (XRPackageMetadataStore.AssignLoader(settingsManager, OculusLoaderID, BuildTargetGroup.Android))
+                    if (XRPackageMetadataStore.AssignLoader(settingsManager, OpenXRLoaderID, BuildTargetGroup.Android))
                     {
-                        Debug.Log("[VR Fix] Fixed: Assigned Oculus XR Loader for Android.");
+                        Debug.Log("[VR Fix] Fixed: Assigned OpenXR Loader for Android.");
                         requiresSave = true;
                     }
                     else
                     {
-                        Debug.LogError("[VR Fix] Failed to assign Oculus Loader! Is the Oculus XR Plugin package installed?");
+                        Debug.LogError("[VR Fix] Failed to assign OpenXR Loader! Please verify com.unity.xr.openxr is installed.");
                     }
                 }
             }
@@ -106,45 +107,70 @@ public class FixVRBlackScreen
         if (PlayerSettings.Android.minSdkVersion < AndroidSdkVersions.AndroidApiLevel29)
         {
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel29;
-            Debug.Log("[VR Fix] Fixed: Minimum Android API Level set to 29.");
+            Debug.Log("[VR Fix] Fixed: Minimum Android API Level set to 29 (Meta Quest requirement).");
         }
 
         // 4. Graphics API Enforcement
         GraphicsDeviceType[] currentApis = PlayerSettings.GetGraphicsAPIs(BuildTarget.Android);
-        bool needsGraphicsUpdate = false;
-        if (currentApis.Length > 0 && currentApis[0] != GraphicsDeviceType.OpenGLES3)
+        bool hasVulkan = false;
+        bool hasGLES3 = false;
+        foreach (var api in currentApis)
         {
-            needsGraphicsUpdate = true;
-        }
-        foreach(var api in currentApis)
-        {
-            if (api == GraphicsDeviceType.Vulkan) needsGraphicsUpdate = true;
+            if (api == GraphicsDeviceType.Vulkan) hasVulkan = true;
+            if (api == GraphicsDeviceType.OpenGLES3) hasGLES3 = true;
         }
 
-        if (needsGraphicsUpdate)
+        if (!hasVulkan && !hasGLES3)
         {
-            PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { GraphicsDeviceType.OpenGLES3 });
-            Debug.Log("[VR Fix] Fixed: Set Android Graphics API strictly to OpenGLES3 to prevent URP shader black screens.");
+            PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { GraphicsDeviceType.Vulkan, GraphicsDeviceType.OpenGLES3 });
+            Debug.Log("[VR Fix] Fixed: Set Android Graphics API to Vulkan with OpenGLES3 fallback.");
+        }
+
+        // 5. URP Render Scale & MSAA Check
+        string[] rpGuids = AssetDatabase.FindAssets("t:UniversalRenderPipelineAsset");
+        foreach (var guid in rpGuids)
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            var rpAsset = AssetDatabase.LoadAssetAtPath<UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset>(path);
+            if (rpAsset != null)
+            {
+                if (rpAsset.renderScale > 1.2f)
+                {
+                    rpAsset.renderScale = 1.0f;
+                    Debug.Log($"[VR Fix] Fixed: Reset high render scale on {rpAsset.name} to 1.0 to prevent mobile VR crash/black screen.");
+                    EditorUtility.SetDirty(rpAsset);
+                    requiresSave = true;
+                }
+                if (rpAsset.msaaSampleCount > 4)
+                {
+                    rpAsset.msaaSampleCount = 4;
+                    Debug.Log($"[VR Fix] Fixed: Set MSAA on {rpAsset.name} to 4x for optimal Quest performance.");
+                    EditorUtility.SetDirty(rpAsset);
+                    requiresSave = true;
+                }
+            }
         }
 
         if (requiresSave)
         {
-            EditorUtility.SetDirty(generalSettings);
+            if (generalSettings != null) EditorUtility.SetDirty(generalSettings);
             AssetDatabase.SaveAssets();
         }
 
-        // 5. Scene Validation
+        // 6. Scene Validation
         ValidateActiveScene();
 
         Debug.Log("[VR Fix] Done! Your project is now properly configured for Meta Quest VR.");
         Debug.Log("==============================================");
 
         EditorUtility.DisplayDialog("VR Fix Complete", 
-            "The VR settings have been automatically fixed.\n\n" +
-            "- Removed conflicting XR Loaders (ARCore)\n" +
-            "- Assigned Oculus Loader\n" +
-            "- Fixed Player & Graphics Settings\n\n" +
-            "Please check the Unity Console for full details and build your APK!", "Awesome!");
+            "The VR settings have been automatically configured:\n\n" +
+            "- Enabled 'Initialize XR on Startup'\n" +
+            "- Assigned OpenXR Loader (Standard for Meta Quest in Unity 6)\n" +
+            "- Configured Linear Color Space, IL2CPP & ARM64\n" +
+            "- Enforced Safe Render Scale (1.0) and MSAA (4x)\n" +
+            "- Set Minimum API Level 29 (Android 10+)\n\n" +
+            "Your project is ready to test on your VR headset!", "Awesome!");
     }
 
     private static void ValidateActiveScene()

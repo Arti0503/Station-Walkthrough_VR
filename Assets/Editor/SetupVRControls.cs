@@ -11,6 +11,68 @@ namespace StationWalkthrough.Editor
 {
     public class SetupVRControls : EditorWindow
     {
+        [MenuItem("VR Tools/Uninstall Conflicting App from Quest (Fix Signature Mismatch)")]
+        public static void UninstallConflictingAppFromQuest()
+        {
+            string packageName = "com.DefaultCompany.stationwalkthrough";
+#if UNITY_2021_2_OR_NEWER
+            string id = PlayerSettings.GetApplicationIdentifier(UnityEditor.Build.NamedBuildTarget.Android);
+            if (!string.IsNullOrEmpty(id)) packageName = id;
+#endif
+
+            string adbPath = GetAdbPath();
+            if (string.IsNullOrEmpty(adbPath) || (!System.IO.File.Exists(adbPath) && adbPath != "adb"))
+            {
+                EditorUtility.DisplayDialog("ADB Not Found", "Could not locate adb.exe automatically. Please ensure SideQuest or Unity Android SDK is installed.", "OK");
+                return;
+            }
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = adbPath,
+                Arguments = $"uninstall {packageName}",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            try
+            {
+                using (var process = System.Diagnostics.Process.Start(psi))
+                {
+                    process.WaitForExit(10000);
+                    string output = process.StandardOutput.ReadToEnd();
+                    string error = process.StandardError.ReadToEnd();
+
+                    if (output.Contains("Success"))
+                    {
+                        EditorUtility.DisplayDialog("Uninstall Success", $"Successfully uninstalled '{packageName}' from your connected Meta Quest.\n\nYou can now drag and drop your new APK into SideQuest without any signature error!", "Great!");
+                    }
+                    else
+                    {
+                        EditorUtility.DisplayDialog("Uninstall Result", $"ADB Output:\n{output}\n{error}\nNote: Make sure your Quest is awake and plugged in via USB (or wireless ADB connected). You can also uninstall directly inside SideQuest under 'Currently Installed Apps'.", "OK");
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                EditorUtility.DisplayDialog("Error", "Error executing ADB: " + ex.Message, "OK");
+            }
+        }
+
+        private static string GetAdbPath()
+        {
+            string localAppData = System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData);
+            string sideQuestAdb = System.IO.Path.Combine(localAppData, @"Programs\SideQuest\resources\platform-tools\adb.exe");
+            if (System.IO.File.Exists(sideQuestAdb)) return sideQuestAdb;
+
+            string unityAdb = EditorApplication.applicationContentsPath + "/PlaybackEngines/AndroidPlayer/SDK/platform-tools/adb.exe";
+            if (System.IO.File.Exists(unityAdb)) return unityAdb;
+
+            return "adb";
+        }
+
         [MenuItem("VR Tools/Clean Duplicate Controllers & Setup VR Input")]
         public static void CleanAndConfigureVRControllersMenu()
         {
@@ -85,8 +147,8 @@ namespace StationWalkthrough.Editor
                     "• Placeholder capsule models removed\n" +
                     "• Clean 1:1 Left & Right Controller tracking anchors configured\n" +
                     "• Unity Input System TrackedPoseDrivers assigned for VR Headset and Hands\n" +
-                    "• Left Stick = Headset-relative Locomotion (Move & Strafe)\n" +
-                    "• Right Stick = Rotation (Snap / Smooth Turn)\n\n" +
+                    "• Left Stick = Locomotion (Move Forward/Back + Strafe Left/Right)\n" +
+                    "• Right Stick = Rotation (Turn Left/Right + Optional Look Up/Down)\n\n" +
                     "Hierarchy is now clean with single Left & Right controllers!",
                     "Great!"
                 );

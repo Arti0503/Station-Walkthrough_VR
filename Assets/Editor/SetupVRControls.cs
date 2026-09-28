@@ -9,8 +9,17 @@ using UnityEngine.XR.Interaction.Toolkit.Inputs;
 
 namespace StationWalkthrough.Editor
 {
+    [InitializeOnLoad]
     public class SetupVRControls : EditorWindow
     {
+        static SetupVRControls()
+        {
+            EditorApplication.delayCall += () =>
+            {
+                CleanAndConfigureVRControllers(false);
+            };
+        }
+
         [MenuItem("VR Tools/Uninstall Conflicting App from Quest (Fix Signature Mismatch)")]
         public static void UninstallConflictingAppFromQuest()
         {
@@ -83,7 +92,7 @@ namespace StationWalkthrough.Editor
         {
             int cleaned = 0;
             int configured = 0;
-            Debug.Log("[VR Controller Setup] Cleaning duplicates and configuring VR Input System...");
+            Debug.Log("[VR Controller Setup] Cleaning duplicate/placeholder models and configuring VR Input System...");
 
             // 1. Process active scene
             Scene activeScene = SceneManager.GetActiveScene();
@@ -142,14 +151,15 @@ namespace StationWalkthrough.Editor
             {
                 EditorUtility.DisplayDialog(
                     "VR Controller Setup Complete",
-                    $"Successfully cleaned {cleaned} duplicate/placeholder objects and configured {configured} controller settings.\n\n" +
-                    "• Duplicate Left & Right controller GameObjects removed\n" +
-                    "• Placeholder capsule models removed\n" +
+                    $"Successfully cleaned {cleaned} placeholder models and configured {configured} controller settings.\n\n" +
+                    "• Placeholder controller models (LeftControllerModel/RightControllerModel) removed\n" +
+                    "• Camera Rigidbody/Collider removed to prevent physics self-collision blocking\n" +
                     "• Clean 1:1 Left & Right Controller tracking anchors configured\n" +
-                    "• Unity Input System TrackedPoseDrivers assigned for VR Headset and Hands\n" +
-                    "• Left Stick = Locomotion (Move Forward/Back + Strafe Left/Right)\n" +
-                    "• Right Stick = Rotation (Turn Left/Right + Optional Look Up/Down)\n\n" +
-                    "Hierarchy is now clean with single Left & Right controllers!",
+                    "• Left Thumbstick = Movement (Forward/Back + Strafe Left/Right)\n" +
+                    "• Right Thumbstick = Rotation (Snap Turn 45° or Smooth Turn)\n" +
+                    "• Left Stick Click / Grip = Sprint\n" +
+                    "• A/X Buttons = Jump\n\n" +
+                    "Pure VR input without dummy controller meshes blocking the view!",
                     "Great!"
                 );
             }
@@ -158,13 +168,22 @@ namespace StationWalkthrough.Editor
         private static int CleanDuplicateControllers(GameObject targetObj)
         {
             int removed = 0;
-            SimpleFPPController fpp = targetObj.GetComponent<SimpleFPPController>();
+            SimpleFPPController fpp = targetObj.GetComponent<SimpleFPPController>() ?? targetObj.GetComponentInChildren<SimpleFPPController>(true);
             if (fpp == null) return 0;
 
             Camera cam = targetObj.GetComponent<Camera>() ?? targetObj.GetComponentInChildren<Camera>(true);
             if (cam == null && Camera.main != null) cam = Camera.main;
             Transform camTransform = (fpp.playerCamera != null) ? fpp.playerCamera : (cam != null ? cam.transform : targetObj.transform);
             Transform cameraOffset = camTransform.parent != null ? camTransform.parent : camTransform;
+
+            // Remove Rigidbody and CapsuleCollider from Camera which block CapsuleCast and cause self-collision jitter
+            if (camTransform != null)
+            {
+                var rb = camTransform.GetComponent<Rigidbody>();
+                if (rb != null) { DestroyImmediate(rb); removed++; }
+                var col = camTransform.GetComponent<Collider>();
+                if (col != null) { DestroyImmediate(col); removed++; }
+            }
 
             List<Transform> leftControllers = new List<Transform>();
             List<Transform> rightControllers = new List<Transform>();
@@ -175,8 +194,8 @@ namespace StationWalkthrough.Editor
                 Transform child = cameraOffset.GetChild(i);
                 string childName = child.name.ToLower();
 
-                // Find placeholder models
-                if (childName.Contains("leftcontrollermodel") || childName.Contains("rightcontrollermodel"))
+                // Find placeholder models directly under cameraOffset
+                if (childName.Contains("model") || childName.Contains("visual"))
                 {
                     toDestroy.Add(child.gameObject);
                     continue;
@@ -189,30 +208,6 @@ namespace StationWalkthrough.Editor
                 else if (childName.Contains("right") && childName.Contains("controller"))
                 {
                     rightControllers.Add(child);
-                }
-            }
-
-            // Remove child capsule visuals from inside controllers if present
-            foreach (var ctrl in leftControllers)
-            {
-                for (int i = ctrl.childCount - 1; i >= 0; i--)
-                {
-                    Transform c = ctrl.GetChild(i);
-                    if (c.name.ToLower().Contains("model") || c.name.ToLower().Contains("capsule"))
-                    {
-                        toDestroy.Add(c.gameObject);
-                    }
-                }
-            }
-            foreach (var ctrl in rightControllers)
-            {
-                for (int i = ctrl.childCount - 1; i >= 0; i--)
-                {
-                    Transform c = ctrl.GetChild(i);
-                    if (c.name.ToLower().Contains("model") || c.name.ToLower().Contains("capsule"))
-                    {
-                        toDestroy.Add(c.gameObject);
-                    }
                 }
             }
 
@@ -232,6 +227,32 @@ namespace StationWalkthrough.Editor
                 }
             }
 
+            // Clean all visual meshes/models under primary Left Controller
+            Transform primaryLeft = leftControllers.Count > 0 ? leftControllers[0] : null;
+            if (primaryLeft != null)
+            {
+                for (int i = primaryLeft.childCount - 1; i >= 0; i--)
+                {
+                    toDestroy.Add(primaryLeft.GetChild(i).gameObject);
+                }
+                var mr = primaryLeft.GetComponent<MeshRenderer>(); if (mr != null) DestroyImmediate(mr);
+                var mf = primaryLeft.GetComponent<MeshFilter>(); if (mf != null) DestroyImmediate(mf);
+                var col = primaryLeft.GetComponent<Collider>(); if (col != null) DestroyImmediate(col);
+            }
+
+            // Clean all visual meshes/models under primary Right Controller
+            Transform primaryRight = rightControllers.Count > 0 ? rightControllers[0] : null;
+            if (primaryRight != null)
+            {
+                for (int i = primaryRight.childCount - 1; i >= 0; i--)
+                {
+                    toDestroy.Add(primaryRight.GetChild(i).gameObject);
+                }
+                var mr = primaryRight.GetComponent<MeshRenderer>(); if (mr != null) DestroyImmediate(mr);
+                var mf = primaryRight.GetComponent<MeshFilter>(); if (mf != null) DestroyImmediate(mf);
+                var col = primaryRight.GetComponent<Collider>(); if (col != null) DestroyImmediate(col);
+            }
+
             foreach (var obj in toDestroy)
             {
                 if (obj != null)
@@ -247,7 +268,7 @@ namespace StationWalkthrough.Editor
         private static int ConfigureControllerObject(GameObject targetObj, string context)
         {
             int changes = 0;
-            SimpleFPPController fpp = targetObj.GetComponent<SimpleFPPController>();
+            SimpleFPPController fpp = targetObj.GetComponent<SimpleFPPController>() ?? targetObj.GetComponentInChildren<SimpleFPPController>(true);
             if (fpp == null) return 0;
 
             SerializedObject so = new SerializedObject(fpp);
@@ -329,13 +350,21 @@ namespace StationWalkthrough.Editor
                 }
             }
 
-            // Assign anchors in SimpleFPPController
+            // Ensure both Left and Right Controllers are active as tracking anchors
+            leftCtrl.gameObject.SetActive(true);
+            rightCtrl.gameObject.SetActive(true);
+
+            // Assign anchors and VR settings in SimpleFPPController
             so.FindProperty("leftControllerAnchor").objectReferenceValue = leftCtrl;
             so.FindProperty("rightControllerAnchor").objectReferenceValue = rightCtrl;
             so.FindProperty("useVRSnapTurn").boolValue = true;
             so.FindProperty("vrSnapTurnAngle").floatValue = 45f;
+            so.FindProperty("vrTurnSpeed").floatValue = 90f;
             so.FindProperty("vrHeadOrientedMovement").boolValue = true;
-            so.FindProperty("autoCreateControllerAnchors").boolValue = false; // Prevent runtime duplicate creation
+            so.FindProperty("autoCreateControllerAnchors").boolValue = true;
+            so.FindProperty("showVisualControllersInVR").boolValue = false;
+            so.FindProperty("leftControllerPrefab").objectReferenceValue = null;
+            so.FindProperty("rightControllerPrefab").objectReferenceValue = null;
 
             so.ApplyModifiedProperties();
 

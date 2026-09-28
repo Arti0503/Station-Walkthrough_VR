@@ -23,23 +23,13 @@ namespace StationWalkthrough.Editor
                 changed = true;
             }
 
-            // Get current APIs
+            // Ensure Vulkan is the primary API (required by Meta Quest OpenXR)
             GraphicsDeviceType[] apis = PlayerSettings.GetGraphicsAPIs(BuildTarget.Android);
-            bool hasGLES3 = false;
-            bool hasVulkan = false;
-
-            foreach (var api in apis)
-            {
-                if (api == GraphicsDeviceType.OpenGLES3) hasGLES3 = true;
-                if (api == GraphicsDeviceType.Vulkan) hasVulkan = true;
-            }
-
-            // Ensure at least Vulkan or OpenGLES3 is configured
-            if (!hasVulkan && !hasGLES3)
+            if (apis.Length == 0 || apis[0] != GraphicsDeviceType.Vulkan)
             {
                 PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { GraphicsDeviceType.Vulkan, GraphicsDeviceType.OpenGLES3 });
                 changed = true;
-                Debug.Log("[AutoFixGraphicsAPI] Configured Android Graphics APIs to Vulkan with OpenGLES3 fallback.");
+                Debug.Log("[AutoFixGraphicsAPI] Configured Android Graphics APIs to Vulkan (primary) with OpenGLES3 fallback.");
             }
 
             if (changed)

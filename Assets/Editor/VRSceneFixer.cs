@@ -17,16 +17,16 @@ public class VRSceneFixer : EditorWindow
         
         foreach (Camera cam in cameras)
         {
-            if (cam.nearClipPlane > 0.02f || cam.nearClipPlane < 0.005f)
+            if (cam.nearClipPlane < 0.15f)
             {
-                cam.nearClipPlane = 0.01f;
-                Debug.Log($"[VR Fixer] Fixed {cam.name} near clip plane to 0.01 to prevent VR near clipping.");
+                cam.nearClipPlane = 0.15f;
+                Debug.Log($"[VR Fixer] Fixed {cam.name} near clip plane to 0.15 to prevent Z-fighting/flickering.");
                 changes++;
             }
-            if (cam.farClipPlane > 2000f)
+            if (cam.farClipPlane > 500f)
             {
-                cam.farClipPlane = 1000f; 
-                Debug.Log($"[VR Fixer] Fixed {cam.name} far clip plane to 1000 to prevent Z-fighting/flickering on models.");
+                cam.farClipPlane = 400f; 
+                Debug.Log($"[VR Fixer] Fixed {cam.name} far clip plane to 400 to prevent Z-fighting/flickering on models.");
                 changes++;
             }
             

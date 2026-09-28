@@ -17,7 +17,7 @@ public class VRSetupForQuest
         }
 
         // 2. Run Complete VR Setup & Fix
-        FixVRBlackScreen.FixVRIssues();
+        StationWalkthrough.Editor.CompleteQuestVRSetup.ApplyAllQuestVRSettings(true);
     }
 }
 #endif

@@ -550,15 +550,14 @@ MonoBehaviour:
   nameUi: Foveated Rendering
   version: 1
   featureIdInternal: com.unity.openxr.feature.foveatedrendering
-  openxrExtensionStrings: XR_UNITY_foveation XR_FB_foveation XR_FB_foveation_configuration
-    XR_FB_swapchain_update_state XR_FB_foveation_vulkan XR_META_foveation_eye_tracked
-    XR_META_vulkan_swapchain_create_info
+  openxrExtensionStrings: XR_UNITY_foveation XR_FB_foveation XR_FB_foveation_configuration XR_FB_swapchain_update_state XR_FB_foveation_vulkan XR_META_foveation_eye_tracked XR_META_vulkan_swapchain_create_info
   company: Unity
   priority: 0
   targetOpenXRApiVersion: 
   required: 0
   customRuntimeLoaderName: 
   enableSubsampledLayout: 0
+  useEyeTracking: 1
 --- !u!114 &-1458203158936795657
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -673,7 +672,6 @@ MonoBehaviour:
   - {fileID: 7098779995863808116}
   - {fileID: -4008332534875951327}
   - {fileID: 6783299234167170674}
-  - {fileID: -3020403636591346012}
   - {fileID: -5370958531438501268}
   - {fileID: -2981159395257937655}
   - {fileID: -2032023618866593689}
@@ -684,14 +682,13 @@ MonoBehaviour:
   - {fileID: 4984650822671909209}
   - {fileID: 1549982589527544177}
   - {fileID: 8634070001623942397}
-  - {fileID: -3272168256059911456}
   customLoaderName: 
   m_renderMode: 1
   m_latencyOptimization: 1
   m_autoColorSubmissionMode: 1
   m_colorSubmissionModes:
-    m_List: 00000000
-  m_depthSubmissionMode: 0
+    m_List: 00000000i
+  m_depthSubmissionMode: 1
   m_spacewarpMotionVectorTextureFormat: 0
   m_optimizeBufferDiscards: 1
   m_symmetricProjection: 0
@@ -734,7 +731,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9f0ebc320a151d3408ea1e9fce54d40e, type: 3}
   m_Name: OpenXR Package Settings
   m_EditorClassIdentifier: Unity.XR.OpenXR.Editor::UnityEditor.XR.OpenXR.OpenXRPackageSettings
-  Keys: 07000000010000000d000000
+  Keys: 07000000010000000d000000i
   Values:
   - {fileID: -986104461342017666}
   - {fileID: 2347735641118925637}
@@ -834,15 +831,14 @@ MonoBehaviour:
   nameUi: Foveated Rendering
   version: 1
   featureIdInternal: com.unity.openxr.feature.foveatedrendering
-  openxrExtensionStrings: XR_UNITY_foveation XR_FB_foveation XR_FB_foveation_configuration
-    XR_FB_swapchain_update_state XR_FB_foveation_vulkan XR_META_foveation_eye_tracked
-    XR_META_vulkan_swapchain_create_info
+  openxrExtensionStrings: XR_UNITY_foveation XR_FB_foveation XR_FB_foveation_configuration XR_FB_swapchain_update_state XR_FB_foveation_vulkan XR_META_foveation_eye_tracked XR_META_vulkan_swapchain_create_info
   company: Unity
   priority: 0
   targetOpenXRApiVersion: 
   required: 0
   customRuntimeLoaderName: 
   enableSubsampledLayout: 0
+  useEyeTracking: 1
 --- !u!114 &1549982589527544177
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -939,7 +935,6 @@ MonoBehaviour:
   - {fileID: -3856563322048271244}
   - {fileID: -3429441589684404679}
   - {fileID: -718959553311109320}
-  - {fileID: -1235892558027592277}
   - {fileID: -4469261220177002801}
   - {fileID: 805326079329586966}
   - {fileID: 2707584589057296503}
@@ -950,13 +945,12 @@ MonoBehaviour:
   - {fileID: -8866061271817835587}
   - {fileID: 8750188408037129216}
   - {fileID: 534247746835884459}
-  - {fileID: -1458203158936795657}
   customLoaderName: 
   m_renderMode: 1
   m_latencyOptimization: 0
   m_autoColorSubmissionMode: 1
   m_colorSubmissionModes:
-    m_List: 00000000
+    m_List: 00000000i
   m_depthSubmissionMode: 0
   m_spacewarpMotionVectorTextureFormat: 0
   m_optimizeBufferDiscards: 0
@@ -1053,7 +1047,7 @@ MonoBehaviour:
   m_latencyOptimization: 0
   m_autoColorSubmissionMode: 1
   m_colorSubmissionModes:
-    m_List: 00000000
+    m_List: 00000000i
   m_depthSubmissionMode: 0
   m_spacewarpMotionVectorTextureFormat: 0
   m_optimizeBufferDiscards: 0

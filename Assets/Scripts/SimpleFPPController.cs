@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.EnhancedTouch;
+using UnityEngine.InputSystem.XR;
 using UnityEngine.UI;
 using UnityEngine.XR;
 
@@ -41,11 +42,11 @@ public class SimpleFPPController : MonoBehaviour
     [Header("Look / Rotation Settings")]
     public Transform playerCamera;
     public float mouseSensitivity = 0.5f;
-    public float touchSensitivity = 0.012f; // Reduced slightly
+    public float touchSensitivity = 0.012f;
     public float joystickLookSensitivity = 60f;
     public float keyboardTurnSpeed = 90f;
     public bool lockCursorOnDesktop = true;
-    public float rotationSmoothTime = 0.08f; // For smooth and stable camera movement
+    public float rotationSmoothTime = 0.08f;
 
     [Header("Pitch / Vertical Look Limits")]
     [Tooltip("Minimum vertical look angle in degrees (looking up, e.g. -80)")]
@@ -77,6 +78,9 @@ public class SimpleFPPController : MonoBehaviour
     public Transform leftControllerAnchor;
     public Transform rightControllerAnchor;
     public bool autoCreateControllerAnchors = false;
+    public bool showVisualControllersInVR = false;
+    public GameObject leftControllerPrefab;
+    public GameObject rightControllerPrefab;
 
     private float yaw;
     private float pitch;
@@ -103,6 +107,15 @@ public class SimpleFPPController : MonoBehaviour
     private bool uiJumpTriggered = false;
     private float snapTurnTimer = 0f;
     private float snapPitchTimer = 0f;
+    private float vrPollTimer = 0f;
+    private float vrPollDuration = 5f;
+
+    // Dedicated Dynamic VR Input Actions (Direct hardware bindings for Quest controllers)
+    private InputAction vrMoveAction;
+    private InputAction vrTurnAction;
+    private InputAction vrJumpAction;
+    private InputAction vrSprintAction;
+    private InputAction vrResetAction;
 
     // Touch State
     private int lookTouchFingerId = -1;
@@ -110,9 +123,11 @@ public class SimpleFPPController : MonoBehaviour
 
     private void Awake()
     {
-        spawnPosition = transform.position;
-        spawnRotation = transform.rotation;
-        yaw = transform.eulerAngles.y;
+        FindXROriginRoot();
+        Transform target = (xrOriginRoot != null) ? xrOriginRoot : transform;
+        spawnPosition = target.position;
+        spawnRotation = target.rotation;
+        yaw = target.eulerAngles.y;
         currentYaw = yaw;
 
         if (playerCamera == null && Camera.main != null)
@@ -130,7 +145,8 @@ public class SimpleFPPController : MonoBehaviour
         else if (enableVRVerticalLook) enableVRPitchControl = true;
 
         inputActions = new InputSystem_Actions();
-        FindXROriginRoot();
+        SetupDynamicVRInputActions();
+
         FindControllerAnchors();
         SetupPitchPivot();
 
@@ -138,16 +154,83 @@ public class SimpleFPPController : MonoBehaviour
             gameObject.AddComponent<StationWalkthrough.ControlsTutorialUI>();
     }
 
+    private void SetupDynamicVRInputActions()
+    {
+        // 1. VR Movement Action (Left Thumbstick)
+        vrMoveAction = new InputAction("VR_Move", InputActionType.Value, "<XRController>{LeftHand}/thumbstick");
+        vrMoveAction.AddBinding("<XRController>{LeftHand}/primary2DAxis");
+        vrMoveAction.AddBinding("<OculusTouchController>{LeftHand}/thumbstick");
+        vrMoveAction.AddBinding("<OculusTouchController>{LeftHand}/primary2DAxis");
+
+        // 2. VR Turning Action (Right Thumbstick)
+        vrTurnAction = new InputAction("VR_Turn", InputActionType.Value, "<XRController>{RightHand}/thumbstick");
+        vrTurnAction.AddBinding("<XRController>{RightHand}/primary2DAxis");
+        vrTurnAction.AddBinding("<OculusTouchController>{RightHand}/thumbstick");
+        vrTurnAction.AddBinding("<OculusTouchController>{RightHand}/primary2DAxis");
+
+        // 3. VR Jump Action ('A' Button Right Hand or 'X' Button Left Hand)
+        vrJumpAction = new InputAction("VR_Jump", InputActionType.Button, "<XRController>{RightHand}/primaryButton");
+        vrJumpAction.AddBinding("<XRController>{LeftHand}/primaryButton");
+        vrJumpAction.AddBinding("<OculusTouchController>{RightHand}/primaryButton");
+        vrJumpAction.AddBinding("<OculusTouchController>{LeftHand}/primaryButton");
+
+        // 4. VR Sprint Action (Left Thumbstick Click or Grip)
+        vrSprintAction = new InputAction("VR_Sprint", InputActionType.Button, "<XRController>{LeftHand}/thumbstickClicked");
+        vrSprintAction.AddBinding("<XRController>{LeftHand}/gripPressed");
+        vrSprintAction.AddBinding("<XRController>{LeftHand}/gripButton");
+        vrSprintAction.AddBinding("<OculusTouchController>{LeftHand}/thumbstickClicked");
+        vrSprintAction.AddBinding("<OculusTouchController>{LeftHand}/gripPressed");
+
+        // 5. VR Reset Position Action (Menu button or dual stick click)
+        vrResetAction = new InputAction("VR_Reset", InputActionType.Button, "<XRController>/menu");
+        vrResetAction.AddBinding("<XRController>/menuButton");
+        vrResetAction.AddBinding("<OculusTouchController>/menu");
+    }
+
     private void OnEnable()
     {
         EnhancedTouchSupport.Enable();
-        inputActions.Enable();
+        inputActions?.Enable();
+        vrMoveAction?.Enable();
+        vrTurnAction?.Enable();
+        vrJumpAction?.Enable();
+        vrSprintAction?.Enable();
+        vrResetAction?.Enable();
+
+        InputDevices.deviceConnected += OnXRDeviceConnected;
+        InputDevices.deviceDisconnected += OnXRDeviceDisconnected;
     }
 
     private void OnDisable()
     {
         EnhancedTouchSupport.Disable();
-        inputActions.Disable();
+        inputActions?.Disable();
+        vrMoveAction?.Disable();
+        vrTurnAction?.Disable();
+        vrJumpAction?.Disable();
+        vrSprintAction?.Disable();
+        vrResetAction?.Disable();
+
+        InputDevices.deviceConnected -= OnXRDeviceConnected;
+        InputDevices.deviceDisconnected -= OnXRDeviceDisconnected;
+    }
+
+    private void OnDestroy()
+    {
+        vrMoveAction?.Dispose();
+        vrTurnAction?.Dispose();
+        vrJumpAction?.Dispose();
+        vrSprintAction?.Dispose();
+        vrResetAction?.Dispose();
+    }
+
+    private void OnXRDeviceConnected(UnityEngine.XR.InputDevice device)
+    {
+        ApplyPlatformSettings();
+    }
+
+    private void OnXRDeviceDisconnected(UnityEngine.XR.InputDevice device)
+    {
     }
 
     private void Start()
@@ -155,19 +238,10 @@ public class SimpleFPPController : MonoBehaviour
         if (movementJoystick == null)
         {
 #if UNITY_2023_1_OR_NEWER
-            Joystick[] joysticks = FindObjectsByType<Joystick>(FindObjectsSortMode.None);
+            movementJoystick = FindFirstObjectByType<Joystick>();
 #else
-            Joystick[] joysticks = FindObjectsOfType<Joystick>();
+            movementJoystick = FindObjectOfType<Joystick>();
 #endif
-            foreach (var joy in joysticks)
-            {
-                if (joy.gameObject.name.ToLower().Contains("fixed") || joy.gameObject.name.ToLower().Contains("move"))
-                {
-                    movementJoystick = joy;
-                    break;
-                }
-            }
-            if (movementJoystick == null && joysticks.Length > 0) movementJoystick = joysticks[0];
         }
 
         if (lookJoystick == null)
@@ -184,7 +258,6 @@ public class SimpleFPPController : MonoBehaviour
                     lookJoystick = joy;
             }
 
-            // Fallbacks
             if (lookJoystick == null && joysticks.Length > 1) lookJoystick = joysticks[1];
         }
 
@@ -211,6 +284,21 @@ public class SimpleFPPController : MonoBehaviour
 
     private void Update()
     {
+        // Poll for asynchronous OpenXR initialization
+        if (!isVRActive && vrPollDuration > 0f)
+        {
+            vrPollDuration -= Time.deltaTime;
+            vrPollTimer -= Time.deltaTime;
+            if (vrPollTimer <= 0f)
+            {
+                vrPollTimer = 0.5f;
+                if (CheckIsVRActive())
+                {
+                    ApplyPlatformSettings();
+                }
+            }
+        }
+
         if (inputActions.Player.Jump.WasPressedThisFrame()) uiJumpTriggered = true;
 
         if (snapTurnTimer > 0f) snapTurnTimer -= Time.deltaTime;
@@ -225,7 +313,27 @@ public class SimpleFPPController : MonoBehaviour
     {
         if (controlMode == ControlMode.ForceVR) return true;
         if (controlMode == ControlMode.ForceMobileTouch) return false;
-        return XRSettings.isDeviceActive;
+
+        if (XRSettings.isDeviceActive) return true;
+
+        try
+        {
+            if (UnityEngine.XR.Management.XRGeneralSettings.Instance != null &&
+                UnityEngine.XR.Management.XRGeneralSettings.Instance.Manager != null &&
+                UnityEngine.XR.Management.XRGeneralSettings.Instance.Manager.activeLoader != null)
+            {
+                return true;
+            }
+        }
+        catch { }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+        var model = SystemInfo.deviceModel;
+        if (!string.IsNullOrEmpty(model) && (model.Contains("Quest") || model.Contains("Oculus") || model.Contains("Eureka") || model.Contains("Pacific")))
+            return true;
+#endif
+
+        return false;
     }
 
     private void ApplyPlatformSettings()
@@ -236,17 +344,111 @@ public class SimpleFPPController : MonoBehaviour
         if (playerCamera != null)
         {
             var drivers = playerCamera.GetComponents<MonoBehaviour>();
-            foreach (var d in drivers) if (d != null && d.GetType().Name.Contains("TrackedPoseDriver")) d.enabled = isVRActive;
+            foreach (var d in drivers) 
+            {
+                if (d != null && d.GetType().Name.Contains("TrackedPoseDriver")) 
+                {
+                    d.enabled = isVRActive;
+                }
+            }
 
             Camera cam = playerCamera.GetComponent<Camera>();
-            if (cam != null) cam.stereoTargetEye = isVRActive ? StereoTargetEyeMask.Both : StereoTargetEyeMask.None;
+            if (cam != null)
+            {
+                cam.stereoTargetEye = isVRActive ? StereoTargetEyeMask.Both : StereoTargetEyeMask.None;
+
+                if (cam.nearClipPlane < 0.15f) cam.nearClipPlane = 0.15f;
+                if (cam.farClipPlane > 500f) cam.farClipPlane = 400f;
+            }
         }
 
         if (isVRActive)
         {
             FindControllerAnchors();
             SetupPitchPivot();
+            SetupVRControllers();
         }
+    }
+
+    private void SetupVRControllers()
+    {
+        if (playerCamera == null) return;
+        Transform cameraOffset = playerCamera.parent != null ? playerCamera.parent : playerCamera;
+
+        if (leftControllerAnchor == null && autoCreateControllerAnchors)
+        {
+            GameObject leftObj = new GameObject("Left Controller");
+            leftObj.transform.SetParent(cameraOffset, false);
+            leftObj.transform.localPosition = new Vector3(-0.2f, -0.1f, 0.3f);
+            leftControllerAnchor = leftObj.transform;
+        }
+
+        if (rightControllerAnchor == null && autoCreateControllerAnchors)
+        {
+            GameObject rightObj = new GameObject("Right Controller");
+            rightObj.transform.SetParent(cameraOffset, false);
+            rightObj.transform.localPosition = new Vector3(0.2f, -0.1f, 0.3f);
+            rightControllerAnchor = rightObj.transform;
+        }
+
+        if (leftControllerAnchor != null)
+        {
+            EnsureTrackedPoseDriver(leftControllerAnchor.gameObject, true);
+            if (!showVisualControllersInVR) RemoveAllControllerVisuals(leftControllerAnchor);
+        }
+
+        if (rightControllerAnchor != null)
+        {
+            EnsureTrackedPoseDriver(rightControllerAnchor.gameObject, false);
+            if (!showVisualControllersInVR) RemoveAllControllerVisuals(rightControllerAnchor);
+        }
+    }
+
+    public static void RemoveAllControllerVisuals(Transform anchor)
+    {
+        if (anchor == null) return;
+        List<GameObject> toDestroy = new List<GameObject>();
+        for (int i = 0; i < anchor.childCount; i++)
+        {
+            toDestroy.Add(anchor.GetChild(i).gameObject);
+        }
+        foreach (var obj in toDestroy)
+        {
+            if (obj != null)
+            {
+#if UNITY_EDITOR
+                if (!Application.isPlaying) DestroyImmediate(obj);
+                else Destroy(obj);
+#else
+                Destroy(obj);
+#endif
+            }
+        }
+
+        var mr = anchor.GetComponent<MeshRenderer>();
+        if (mr != null) { if (Application.isPlaying) Destroy(mr); else DestroyImmediate(mr); }
+        var mf = anchor.GetComponent<MeshFilter>();
+        if (mf != null) { if (Application.isPlaying) Destroy(mf); else DestroyImmediate(mf); }
+        var col = anchor.GetComponent<Collider>();
+        if (col != null) { if (Application.isPlaying) Destroy(col); else DestroyImmediate(col); }
+    }
+
+    private void EnsureTrackedPoseDriver(GameObject obj, bool isLeft)
+    {
+        var driver = obj.GetComponent<TrackedPoseDriver>();
+        if (driver == null)
+        {
+            driver = obj.AddComponent<TrackedPoseDriver>();
+        }
+        driver.enabled = true;
+        driver.trackingType = TrackedPoseDriver.TrackingType.RotationAndPosition;
+
+        string handTag = isLeft ? "{LeftHand}" : "{RightHand}";
+        string posPath = $"<XRController>{handTag}/devicePosition";
+        string rotPath = $"<XRController>{handTag}/deviceRotation";
+
+        driver.positionInput = new InputActionProperty(new InputAction("Position", InputActionType.Value, posPath, expectedControlType: "Vector3"));
+        driver.rotationInput = new InputActionProperty(new InputAction("Rotation", InputActionType.Value, rotPath, expectedControlType: "Quaternion"));
     }
 
     private void FindXROriginRoot()
@@ -293,30 +495,13 @@ public class SimpleFPPController : MonoBehaviour
 
         if (pitchPivot == null)
         {
-            if (playerCamera.parent != null && playerCamera.parent.name.Contains("Pitch"))
+            if (playerCamera.parent != null && playerCamera.parent.name.Contains("Pivot"))
             {
                 pitchPivot = playerCamera.parent;
             }
-            else if (isVRActive && playerCamera.parent != null)
+            else
             {
-                Transform existing = playerCamera.parent.Find("CameraPitchPivot");
-                if (existing != null)
-                {
-                    pitchPivot = existing;
-                }
-                else
-                {
-                    // Create dedicated CameraPitchPivot between Camera Offset and Main Camera
-                    // This allows tilting the camera up/down in VR without tilting the controller anchors
-                    GameObject pivotObj = new GameObject("CameraPitchPivot");
-                    pivotObj.transform.SetParent(playerCamera.parent, false);
-                    pivotObj.transform.localPosition = playerCamera.localPosition;
-                    pivotObj.transform.localRotation = Quaternion.identity;
-                    pivotObj.transform.localScale = Vector3.one;
-
-                    playerCamera.SetParent(pivotObj.transform, true);
-                    pitchPivot = pivotObj.transform;
-                }
+                pitchPivot = playerCamera;
             }
         }
 
@@ -326,45 +511,212 @@ public class SimpleFPPController : MonoBehaviour
         }
     }
 
+    private static bool IsLeftHandController(UnityEngine.InputSystem.InputDevice device)
+    {
+        if (device == null) return false;
+        for (int i = 0; i < device.usages.Count; i++)
+        {
+            if (device.usages[i] == UnityEngine.InputSystem.CommonUsages.LeftHand) return true;
+        }
+        string devName = device.name != null ? device.name.ToLower() : "";
+        return devName.Contains("left");
+    }
+
+    private static bool IsRightHandController(UnityEngine.InputSystem.InputDevice device)
+    {
+        if (device == null) return false;
+        for (int i = 0; i < device.usages.Count; i++)
+        {
+            if (device.usages[i] == UnityEngine.InputSystem.CommonUsages.RightHand) return true;
+        }
+        string devName = device.name != null ? device.name.ToLower() : "";
+        return devName.Contains("right");
+    }
+
+    /// <summary>
+    /// Reads the Left VR Controller Joystick for Movement:
+    /// Returns 2D Vector: X = Strafe Left/Right (-1 to 1), Y = Forward/Backward (-1 to 1)
+    /// </summary>
+    public Vector2 GetVRLeftJoystick()
+    {
+        // 1. Direct hardware InputAction (Highest priority, works on all Meta Quest headsets)
+        if (vrMoveAction != null)
+        {
+            Vector2 actionVal = vrMoveAction.ReadValue<Vector2>();
+            if (actionVal.sqrMagnitude > inputDeadzone * inputDeadzone)
+            {
+                return actionVal;
+            }
+        }
+
+        // 2. Direct OpenXR InputDevices query (XRNode.LeftHand primary2DAxis)
+        var leftDevices = new List<UnityEngine.XR.InputDevice>();
+        InputDevices.GetDevicesAtXRNode(XRNode.LeftHand, leftDevices);
+        if (leftDevices.Count == 0)
+        {
+            InputDevices.GetDevicesWithCharacteristics(InputDeviceCharacteristics.Left | InputDeviceCharacteristics.Controller, leftDevices);
+        }
+        foreach (var dev in leftDevices)
+        {
+            if (dev.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 val) && val.sqrMagnitude > inputDeadzone * inputDeadzone)
+            {
+                return val;
+            }
+            if (dev.TryGetFeatureValue(CommonUsages.secondary2DAxis, out Vector2 secVal) && secVal.sqrMagnitude > inputDeadzone * inputDeadzone)
+            {
+                return secVal;
+            }
+        }
+
+        // 3. Direct Input System XR Controller devices query (Thumbstick / Primary2DAxis)
+        foreach (var device in UnityEngine.InputSystem.InputSystem.devices)
+        {
+            if (device is UnityEngine.InputSystem.XR.XRController ctrl && IsLeftHandController(device))
+            {
+                var stick = ctrl.GetChildControl<UnityEngine.InputSystem.Controls.Vector2Control>("thumbstick") 
+                         ?? ctrl.GetChildControl<UnityEngine.InputSystem.Controls.Vector2Control>("primary2DAxis")
+                         ?? ctrl.GetChildControl<UnityEngine.InputSystem.Controls.Vector2Control>("joystick");
+                if (stick != null)
+                {
+                    Vector2 val = stick.ReadValue();
+                    if (val.sqrMagnitude > inputDeadzone * inputDeadzone)
+                    {
+                        return val;
+                    }
+                }
+            }
+        }
+
+        // 4. Input System Action query (Player.Move)
+        if (inputActions != null)
+        {
+            Vector2 actionVal = inputActions.Player.Move.ReadValue<Vector2>();
+            if (actionVal.sqrMagnitude > inputDeadzone * inputDeadzone)
+            {
+                return actionVal;
+            }
+        }
+
+        // 5. Gamepad fallback (XR Simulator / Link gamepad emulation)
+        if (UnityEngine.InputSystem.Gamepad.current != null)
+        {
+            Vector2 gpVal = UnityEngine.InputSystem.Gamepad.current.leftStick.ReadValue();
+            if (gpVal.sqrMagnitude > inputDeadzone * inputDeadzone)
+            {
+                return gpVal;
+            }
+        }
+
+        return Vector2.zero;
+    }
+
+    /// <summary>
+    /// Reads the Right VR Controller Joystick for Rotation/Turning:
+    /// Returns 2D Vector: X = Turn Left/Right (-1 to 1), Y = Look Up/Down (-1 to 1)
+    /// </summary>
+    public Vector2 GetVRRightJoystick()
+    {
+        // 1. Direct hardware InputAction (Highest priority, works on all Meta Quest headsets)
+        if (vrTurnAction != null)
+        {
+            Vector2 actionVal = vrTurnAction.ReadValue<Vector2>();
+            if (actionVal.sqrMagnitude > inputDeadzone * inputDeadzone)
+            {
+                return actionVal;
+            }
+        }
+
+        // 2. Direct OpenXR InputDevices query (XRNode.RightHand primary2DAxis)
+        var rightDevices = new List<UnityEngine.XR.InputDevice>();
+        InputDevices.GetDevicesAtXRNode(XRNode.RightHand, rightDevices);
+        if (rightDevices.Count == 0)
+        {
+            InputDevices.GetDevicesWithCharacteristics(InputDeviceCharacteristics.Right | InputDeviceCharacteristics.Controller, rightDevices);
+        }
+        foreach (var dev in rightDevices)
+        {
+            if (dev.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 val) && val.sqrMagnitude > inputDeadzone * inputDeadzone)
+            {
+                return val;
+            }
+            if (dev.TryGetFeatureValue(CommonUsages.secondary2DAxis, out Vector2 secVal) && secVal.sqrMagnitude > inputDeadzone * inputDeadzone)
+            {
+                return secVal;
+            }
+        }
+
+        // 3. Direct Input System XR Controller devices query (Thumbstick / Primary2DAxis)
+        foreach (var device in UnityEngine.InputSystem.InputSystem.devices)
+        {
+            if (device is UnityEngine.InputSystem.XR.XRController ctrl && IsRightHandController(device))
+            {
+                var stick = ctrl.GetChildControl<UnityEngine.InputSystem.Controls.Vector2Control>("thumbstick") 
+                         ?? ctrl.GetChildControl<UnityEngine.InputSystem.Controls.Vector2Control>("primary2DAxis")
+                         ?? ctrl.GetChildControl<UnityEngine.InputSystem.Controls.Vector2Control>("joystick");
+                if (stick != null)
+                {
+                    Vector2 val = stick.ReadValue();
+                    if (val.sqrMagnitude > inputDeadzone * inputDeadzone)
+                    {
+                        return val;
+                    }
+                }
+            }
+        }
+
+        // 4. Input System Action query (Player.Look)
+        if (inputActions != null)
+        {
+            if (inputActions.Player.Look.activeControl == null || !(inputActions.Player.Look.activeControl.device is Pointer))
+            {
+                Vector2 actionVal = inputActions.Player.Look.ReadValue<Vector2>();
+                if (actionVal.sqrMagnitude > inputDeadzone * inputDeadzone)
+                {
+                    return actionVal;
+                }
+            }
+        }
+
+        // 5. Gamepad fallback (XR Simulator / Link gamepad emulation)
+        if (UnityEngine.InputSystem.Gamepad.current != null)
+        {
+            Vector2 gpVal = UnityEngine.InputSystem.Gamepad.current.rightStick.ReadValue();
+            if (gpVal.sqrMagnitude > inputDeadzone * inputDeadzone)
+            {
+                return gpVal;
+            }
+        }
+
+        return Vector2.zero;
+    }
+
     private void HandleRotation()
     {
         float lookX = 0f;
         float lookY = 0f;
 
-        // 1. Input System (Gamepad / VR right stick)
-        Vector2 lookInput = inputActions.Player.Look.ReadValue<Vector2>();
+        // Read VR Right Joystick (always checked so controls work instantly)
+        Vector2 vrLook = GetVRRightJoystick();
+        Vector2 lookInput = vrLook;
 
-        // Prevent pointer delta (Mouse/Touch) from being processed by the generic Input System here
-        // so it doesn't rotate the camera when dragging the on-screen joystick or when unlocked.
-        if (inputActions.Player.Look.activeControl != null && inputActions.Player.Look.activeControl.device is Pointer)
+        if (lookInput.sqrMagnitude <= inputDeadzone * inputDeadzone)
         {
-            lookInput = Vector2.zero;
-        }
-
-        // VR Fallback Right Hand (Check both primary2DAxis and secondary2DAxis on the Right Hand controller)
-        if (isVRActive && lookInput.sqrMagnitude <= inputDeadzone * inputDeadzone)
-        {
-            var rightHandDevices = new List<UnityEngine.XR.InputDevice>();
-            InputDevices.GetDevicesAtXRNode(XRNode.RightHand, rightHandDevices);
-            foreach (var device in rightHandDevices)
+            // Non-VR Gamepad Look
+            Vector2 rawLook = inputActions.Player.Look.ReadValue<Vector2>();
+            if (inputActions.Player.Look.activeControl != null && inputActions.Player.Look.activeControl.device is Pointer)
             {
-                if (device.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 axis) && axis.sqrMagnitude > inputDeadzone * inputDeadzone)
-                {
-                    lookInput = axis;
-                    break;
-                }
-                if (device.TryGetFeatureValue(CommonUsages.secondary2DAxis, out Vector2 secAxis) && secAxis.sqrMagnitude > inputDeadzone * inputDeadzone)
-                {
-                    lookInput = secAxis;
-                    break;
-                }
+                rawLook = Vector2.zero;
+            }
+            if (rawLook.sqrMagnitude > inputDeadzone * inputDeadzone)
+            {
+                lookInput = rawLook;
             }
         }
 
         // Process Right Joystick (VR Right Thumbstick / Gamepad Right Stick)
         if (lookInput.sqrMagnitude > inputDeadzone * inputDeadzone)
         {
-            if (isVRActive)
+            if (isVRActive || vrLook.sqrMagnitude > inputDeadzone * inputDeadzone)
             {
                 float repeatDelay = vrSnapTurnRepeatDelay > 0f ? vrSnapTurnRepeatDelay : vrSnapTurnCooldown;
 
@@ -404,7 +756,6 @@ public class SimpleFPPController : MonoBehaviour
                     }
                     else
                     {
-                        // Smooth vertical look
                         lookY += lookInput.y * vrTurnSpeed * Time.deltaTime;
                     }
                 }
@@ -417,7 +768,7 @@ public class SimpleFPPController : MonoBehaviour
             }
         }
 
-        // 2. Keyboard Arrows (Look Around)
+        // Keyboard Arrows
         if (Keyboard.current != null)
         {
             if (Keyboard.current.rightArrowKey.isPressed) lookX += keyboardTurnSpeed * Time.deltaTime;
@@ -429,32 +780,28 @@ public class SimpleFPPController : MonoBehaviour
             }
         }
 
-        // 3. Virtual Look Joystick (Right Joystick on Mobile)
+        // Virtual Look Joystick (Right Joystick on Mobile)
         if (!isVRActive && lookJoystick != null && lookJoystick.gameObject.activeInHierarchy)
         {
             if (lookJoystick.Direction.sqrMagnitude > inputDeadzone * inputDeadzone)
             {
-                // Horizontal (X) and Vertical (Y) look rotation
                 lookX += lookJoystick.Direction.x * joystickLookSensitivity * Time.deltaTime;
                 lookY += lookJoystick.Direction.y * joystickLookSensitivity * Time.deltaTime;
             }
         }
 
-        // 4. Touch Look (Free Screen Dragging)
+        // Touch Look (Mobile drag)
         if (!isVRActive && EnhancedTouchSupport.enabled)
         {
             foreach (var touch in Touch.activeTouches)
             {
                 if (touch.phase == TouchPhase.Began)
                 {
-                    // Restrict touch rotation strictly to the right half of the screen
-                    // This guarantees the left movement joystick won't accidentally spin the camera
                     if (touch.screenPosition.x > Screen.width * 0.5f && lookTouchFingerId == -1)
                     {
                         bool isOverUI = false;
                         if (UnityEngine.EventSystems.EventSystem.current != null)
                         {
-                            // Check both ID types to ensure UI touches (like buttons) are ignored properly
                             isOverUI = UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject(touch.finger.index) ||
                                        UnityEngine.EventSystems.EventSystem.current.IsPointerOverGameObject(touch.touchId);
                         }
@@ -473,7 +820,6 @@ public class SimpleFPPController : MonoBehaviour
                         Vector2 delta = touch.screenPosition - lastLookTouchPos;
                         lastLookTouchPos = touch.screenPosition;
 
-                        // Apply both horizontal and vertical look rotation
                         lookX += delta.x * touchSensitivity;
                         lookY += delta.y * touchSensitivity;
                     }
@@ -485,20 +831,10 @@ public class SimpleFPPController : MonoBehaviour
             }
         }
 
-        // 5. Mouse Look (Editor / Desktop)
+        // Mouse Look (Desktop)
         if (!isVRActive && Mouse.current != null)
         {
-            bool canMouseLook = false;
-
-            if (Cursor.lockState == CursorLockMode.Locked)
-            {
-                canMouseLook = true;
-            }
-            else if (Mouse.current.rightButton.isPressed)
-            {
-                canMouseLook = true; // Allow looking around while holding right click if unlocked
-            }
-
+            bool canMouseLook = (Cursor.lockState == CursorLockMode.Locked) || Mouse.current.rightButton.isPressed;
             if (canMouseLook)
             {
                 Vector2 delta = Mouse.current.delta.ReadValue();
@@ -509,23 +845,24 @@ public class SimpleFPPController : MonoBehaviour
 
         yaw += lookX;
 
-        // Apply vertical look (pitch) with user-defined rotation limits (e.g. ±60° to ±80°)
-        if (invertY)
-            pitch += lookY;
-        else
-            pitch -= lookY;
+        if (invertY) pitch += lookY;
+        else pitch -= lookY;
 
         float actualMin = Mathf.Min(minPitch, maxPitch);
         float actualMax = Mathf.Max(minPitch, maxPitch);
         pitch = Mathf.Clamp(pitch, actualMin, actualMax);
 
-        if (isVRActive)
+        if (isVRActive || vrLook.sqrMagnitude > inputDeadzone * inputDeadzone)
         {
-            currentYaw = yaw; // Keep VR snap turning instant to prevent motion sickness
-            currentPitch = (enableVRVerticalLook || enableVRPitchControl) ? pitch : 0f;
-
             Transform rotTarget = xrOriginRoot != null ? xrOriginRoot : transform;
-            rotTarget.rotation = Quaternion.Euler(0f, currentYaw, 0f);
+            if (Mathf.Abs(lookX) > 0.0001f)
+            {
+                Vector3 pivot = playerCamera != null ? playerCamera.position : rotTarget.position;
+                rotTarget.RotateAround(pivot, Vector3.up, lookX);
+                yaw = rotTarget.eulerAngles.y;
+            }
+            currentYaw = yaw;
+            currentPitch = (enableVRVerticalLook || enableVRPitchControl) ? pitch : 0f;
 
             if (pitchPivot != null)
             {
@@ -539,7 +876,6 @@ public class SimpleFPPController : MonoBehaviour
                 pitchPivot.localRotation = initialPitchPivotRotation;
             }
 
-            // Apply smoothing for mobile/desktop
             if (rotationSmoothTime > 0f)
             {
                 currentYaw = Mathf.SmoothDamp(currentYaw, yaw, ref yawVelocity, rotationSmoothTime);
@@ -554,12 +890,10 @@ public class SimpleFPPController : MonoBehaviour
 
             if (playerCamera != null && playerCamera == transform)
             {
-                // Script is attached directly to the Camera
                 transform.localRotation = initialCameraRotation * Quaternion.Euler(currentPitch, currentYaw, 0f);
             }
             else
             {
-                // Script is attached to a parent body - vertical pitch only rotates camera view, not the body
                 transform.rotation = Quaternion.Euler(0f, currentYaw, 0f);
                 if (playerCamera != null) playerCamera.localRotation = initialCameraRotation * Quaternion.Euler(currentPitch, 0f, 0f);
             }
@@ -573,8 +907,7 @@ public class SimpleFPPController : MonoBehaviour
         bool jumpPressed = uiJumpTriggered;
         uiJumpTriggered = false;
 
-        // 1. Keyboard WASD (Highest Priority)
-        // W = Forward, S = Backward, A = Left, D = Right
+        // 1. Keyboard WASD
         if (Keyboard.current != null)
         {
             if (Keyboard.current.wKey.isPressed) input.y += 1f;
@@ -585,79 +918,67 @@ public class SimpleFPPController : MonoBehaviour
             if (Keyboard.current.spaceKey.wasPressedThisFrame) jumpPressed = true;
         }
 
-        // 2. Input System / Gamepad (Only if keyboard is not being used)
+        // 2. VR Controller Input (Always polled so Quest thumbstick works immediately)
+        Vector2 vrMove = GetVRLeftJoystick();
+        if (vrMove.sqrMagnitude > inputDeadzone * inputDeadzone)
+        {
+            input = vrMove;
+        }
+
+        // VR Sprint (Left Stick Click or Left Grip)
+        if (vrSprintAction != null && vrSprintAction.IsPressed()) isSprinting = true;
+
+        var leftDevices = new List<UnityEngine.XR.InputDevice>();
+        InputDevices.GetDevicesAtXRNode(XRNode.LeftHand, leftDevices);
+        if (leftDevices.Count == 0) InputDevices.GetDevicesWithCharacteristics(InputDeviceCharacteristics.Left | InputDeviceCharacteristics.Controller, leftDevices);
+        foreach (var device in leftDevices)
+        {
+            if (device.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out bool stickClick) && stickClick) isSprinting = true;
+            if (device.TryGetFeatureValue(CommonUsages.gripButton, out bool gripBtn) && gripBtn) isSprinting = true;
+            if (device.TryGetFeatureValue(CommonUsages.grip, out float gripVal) && gripVal > 0.5f) isSprinting = true;
+        }
+
+        // VR Jump (A Button or X Button)
+        bool vrJump = (vrJumpAction != null && vrJumpAction.IsPressed());
+        var allHands = new List<UnityEngine.XR.InputDevice>();
+        InputDevices.GetDevicesAtXRNode(XRNode.RightHand, allHands);
+        InputDevices.GetDevicesAtXRNode(XRNode.LeftHand, allHands);
+        if (allHands.Count == 0) InputDevices.GetDevicesWithCharacteristics(InputDeviceCharacteristics.Controller, allHands);
+        foreach (var device in allHands)
+        {
+            if (device.TryGetFeatureValue(CommonUsages.primaryButton, out bool p) && p) vrJump = true;
+            if (device.TryGetFeatureValue(CommonUsages.secondaryButton, out bool s) && s) vrJump = true;
+        }
+        if (vrJump && !prevVRJumpState) jumpPressed = true;
+        prevVRJumpState = vrJump;
+
+        // VR Reset Position (Menu button or dual stick click)
+        bool menuPress = (vrResetAction != null && vrResetAction.IsPressed());
+        bool leftStickClick = false;
+        bool rightStickClick = false;
+        foreach (var d in leftDevices)
+        {
+            if (d.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out bool c) && c) leftStickClick = true;
+            if (d.TryGetFeatureValue(CommonUsages.menuButton, out bool m) && m) menuPress = true;
+        }
+        var rightDevices = new List<UnityEngine.XR.InputDevice>();
+        InputDevices.GetDevicesAtXRNode(XRNode.RightHand, rightDevices);
+        if (rightDevices.Count == 0) InputDevices.GetDevicesWithCharacteristics(InputDeviceCharacteristics.Right | InputDeviceCharacteristics.Controller, rightDevices);
+        foreach (var d in rightDevices)
+        {
+            if (d.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out bool c) && c) rightStickClick = true;
+        }
+        if ((leftStickClick && rightStickClick) || menuPress)
+        {
+            ResetPosition();
+        }
+
+        // 3. Input System Gamepad
         if (input == Vector2.zero)
         {
             Vector2 moveInput = inputActions.Player.Move.ReadValue<Vector2>();
             if (moveInput.sqrMagnitude > inputDeadzone * inputDeadzone) input = moveInput;
             if (inputActions.Player.Sprint.IsPressed()) isSprinting = true;
-        }
-
-        // 3. VR Controller Input (Left Stick Move & Strafe, Sprint, Jump, Reset)
-        if (isVRActive)
-        {
-            // Left Controller Thumbstick Move: forward/backward (Y) + left/right strafe (X)
-            if (input == Vector2.zero)
-            {
-                var leftHandDevices = new List<UnityEngine.XR.InputDevice>();
-                InputDevices.GetDevicesAtXRNode(XRNode.LeftHand, leftHandDevices);
-                foreach (var device in leftHandDevices)
-                {
-                    if (device.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 axis) && axis.sqrMagnitude > inputDeadzone * inputDeadzone)
-                    {
-                        input = axis;
-                        break;
-                    }
-                    if (device.TryGetFeatureValue(CommonUsages.secondary2DAxis, out Vector2 secAxis) && secAxis.sqrMagnitude > inputDeadzone * inputDeadzone)
-                    {
-                        input = secAxis;
-                        break;
-                    }
-                }
-            }
-
-            // Left Hand Sprint (Left Stick Click or Left Grip Trigger)
-            var leftDevices = new List<UnityEngine.XR.InputDevice>();
-            InputDevices.GetDevicesAtXRNode(XRNode.LeftHand, leftDevices);
-            foreach (var device in leftDevices)
-            {
-                if (device.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out bool stickClick) && stickClick) isSprinting = true;
-                if (device.TryGetFeatureValue(CommonUsages.gripButton, out bool gripBtn) && gripBtn) isSprinting = true;
-                if (device.TryGetFeatureValue(CommonUsages.grip, out float gripVal) && gripVal > 0.5f) isSprinting = true;
-            }
-
-            // Jump Buttons: 'A' (Right Hand) or 'X' (Left Hand)
-            bool vrJump = false;
-            var allHands = new List<UnityEngine.XR.InputDevice>();
-            InputDevices.GetDevicesAtXRNode(XRNode.RightHand, allHands);
-            InputDevices.GetDevicesAtXRNode(XRNode.LeftHand, allHands);
-            foreach (var device in allHands)
-            {
-                if (device.TryGetFeatureValue(CommonUsages.primaryButton, out bool p) && p) vrJump = true;
-                if (device.TryGetFeatureValue(CommonUsages.secondaryButton, out bool s) && s) vrJump = true;
-            }
-            if (vrJump && !prevVRJumpState) jumpPressed = true;
-            prevVRJumpState = vrJump;
-
-            // Dual Stick Click or Menu Button to Reset Position
-            bool leftStickClick = false;
-            bool rightStickClick = false;
-            bool menuPress = false;
-            foreach (var d in leftDevices)
-            {
-                if (d.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out bool c) && c) leftStickClick = true;
-                if (d.TryGetFeatureValue(CommonUsages.menuButton, out bool m) && m) menuPress = true;
-            }
-            var rightDevices = new List<UnityEngine.XR.InputDevice>();
-            InputDevices.GetDevicesAtXRNode(XRNode.RightHand, rightDevices);
-            foreach (var d in rightDevices)
-            {
-                if (d.TryGetFeatureValue(CommonUsages.primary2DAxisClick, out bool c) && c) rightStickClick = true;
-            }
-            if ((leftStickClick && rightStickClick) || menuPress)
-            {
-                ResetPosition();
-            }
         }
 
         // 4. Mobile Joystick
@@ -666,25 +987,21 @@ public class SimpleFPPController : MonoBehaviour
             if (movementJoystick.Direction.sqrMagnitude > inputDeadzone * inputDeadzone) input = movementJoystick.Direction;
         }
 
-        // Clean up input (Deadzone & Snapping)
+        // Clean up input
         if (input.sqrMagnitude > 0.001f)
         {
             if (Mathf.Abs(input.x) < axisSnapThreshold) input.x = 0f;
             if (Mathf.Abs(input.y) < axisSnapThreshold) input.y = 0f;
-
-            // Allow analog joystick speed by clamping instead of always normalizing to 1
             input = Vector2.ClampMagnitude(input, 1f);
         }
 
-        // Calculate Direction based on exact forward vectors
+        // Calculate Direction based on forward vectors
         Vector3 bodyForward;
         Vector3 bodyRight;
 
-        if (isVRActive)
+        if (isVRActive || vrMove.sqrMagnitude > inputDeadzone * inputDeadzone)
         {
-            // In VR, push forward based on where the headset is facing (or controller if orientation is customized)
             Transform orientationRef = (vrHeadOrientedMovement || leftControllerAnchor == null) ? playerCamera : leftControllerAnchor;
-
             if (orientationRef != null)
             {
                 bodyForward = orientationRef.forward;
@@ -708,7 +1025,6 @@ public class SimpleFPPController : MonoBehaviour
         }
         else
         {
-            // Non-VR: push forward based on the body's rotation
             bodyForward = transform.forward;
             bodyForward.y = 0f;
             if (bodyForward.sqrMagnitude < 0.001f) bodyForward = Vector3.forward; else bodyForward.Normalize();
@@ -724,29 +1040,31 @@ public class SimpleFPPController : MonoBehaviour
         float speed = isSprinting ? sprintSpeed : moveSpeed;
         Vector3 targetVel = moveDir * speed;
 
-        Transform moveTarget = (isVRActive && xrOriginRoot != null) ? xrOriginRoot : transform;
+        Transform moveTarget = (xrOriginRoot != null) ? xrOriginRoot : transform;
 
-        // Physics-less Wall Collision (CapsuleCast)
+        // Physics-less Wall Collision (CapsuleCastAll with self-collider filter)
         Vector3 finalMove = targetVel * Time.deltaTime;
 
         if (enableWallCollision && finalMove.sqrMagnitude > 0.00001f)
         {
             bool isCamera = (moveTarget.GetComponent<Camera>() != null);
-            // Calculate capsule points (bottom is feet, top is head). 
-            // We add 0.05f (skin width) to the bottom so it doesn't drag on the floor mesh colliders, preventing micro-jitters!
             Vector3 bottom = moveTarget.position + (isCamera ? Vector3.down * (playerHeight - playerRadius - 0.05f) : Vector3.up * (playerRadius + 0.05f));
             Vector3 top = moveTarget.position + (isCamera ? Vector3.down * playerRadius : Vector3.up * (playerHeight - playerRadius));
 
-            // Only cast horizontal movement to prevent getting stuck on tiny floor bumps
             Vector3 horizontalMove = new Vector3(finalMove.x, 0f, finalMove.z);
             if (horizontalMove.sqrMagnitude > 0.00001f)
             {
-                if (Physics.CapsuleCast(bottom, top, playerRadius, horizontalMove.normalized, out RaycastHit hit, horizontalMove.magnitude, wallCollisionLayer, QueryTriggerInteraction.Ignore))
+                RaycastHit[] hits = Physics.CapsuleCastAll(bottom, top, playerRadius, horizontalMove.normalized, horizontalMove.magnitude, wallCollisionLayer, QueryTriggerInteraction.Ignore);
+                System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+                foreach (var hit in hits)
                 {
-                    // Slide smoothly along the wall instead of stopping completely
-                    horizontalMove = Vector3.ProjectOnPlane(horizontalMove, hit.normal);
-                    finalMove.x = horizontalMove.x;
-                    finalMove.z = horizontalMove.z;
+                    if (hit.collider != null && !hit.collider.transform.IsChildOf(moveTarget))
+                    {
+                        horizontalMove = Vector3.ProjectOnPlane(horizontalMove, hit.normal);
+                        finalMove.x = horizontalMove.x;
+                        finalMove.z = horizontalMove.z;
+                        break;
+                    }
                 }
             }
         }
@@ -782,7 +1100,7 @@ public class SimpleFPPController : MonoBehaviour
         currentPitch = 0f;
         yawVelocity = 0f;
         pitchVelocity = 0f;
-        Transform moveTarget = (isVRActive && xrOriginRoot != null) ? xrOriginRoot : transform;
+        Transform moveTarget = (xrOriginRoot != null) ? xrOriginRoot : transform;
         moveTarget.position = spawnPosition;
         moveTarget.rotation = spawnRotation;
         verticalVelocity = 0f;

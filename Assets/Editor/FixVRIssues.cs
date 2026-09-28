@@ -18,16 +18,16 @@ public class FixVRIssues : EditorWindow
         
         foreach (Camera cam in cameras)
         {
-            if (cam.nearClipPlane > 0.02f || cam.nearClipPlane < 0.005f)
+            if (cam.nearClipPlane < 0.15f)
             {
-                cam.nearClipPlane = 0.01f;
-                Debug.Log($"Fixed {cam.name} near clip plane to 0.01 to prevent VR clipping.");
+                cam.nearClipPlane = 0.15f;
+                Debug.Log($"Fixed {cam.name} near clip plane to 0.15 to prevent Z-fighting/flickering.");
                 changes++;
             }
-            if (cam.farClipPlane > 2000f)
+            if (cam.farClipPlane > 500f)
             {
-                cam.farClipPlane = 1000f; // Prevent Z-fighting
-                Debug.Log($"Fixed {cam.name} far clip plane to 1000 to prevent Z-fighting/flickering.");
+                cam.farClipPlane = 400f; // Prevent Z-fighting depth buffer loss
+                Debug.Log($"Fixed {cam.name} far clip plane to 400 to prevent Z-fighting/flickering.");
                 changes++;
             }
         }

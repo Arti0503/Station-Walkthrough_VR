@@ -17,6 +17,8 @@ public class FixVRBlackScreen
     [MenuItem("VR Setup/1-Click Fix VR Black Screen")]
     public static void FixVRIssues()
     {
+        if (EditorApplication.isPlayingOrWillChangePlaymode || Application.isPlaying) return;
+
         Debug.Log("==============================================");
         Debug.Log("[VR Fix] Starting VR Black Screen Diagnostic & Fix...");
         
@@ -78,6 +80,41 @@ public class FixVRBlackScreen
                         Debug.LogError("[VR Fix] Failed to assign OpenXR Loader! Please verify com.unity.xr.openxr is installed.");
                     }
                 }
+
+                // Configure OpenXR Android settings
+                var openXRSettings = UnityEngine.XR.OpenXR.OpenXRSettings.GetSettingsForBuildTargetGroup(BuildTargetGroup.Android);
+                if (openXRSettings != null)
+                {
+                    openXRSettings.renderMode = UnityEngine.XR.OpenXR.OpenXRSettings.RenderMode.SinglePassInstanced;
+                    openXRSettings.latencyOptimization = UnityEngine.XR.OpenXR.OpenXRSettings.LatencyOptimization.PrioritizeInputPolling;
+                    openXRSettings.depthSubmissionMode = UnityEngine.XR.OpenXR.OpenXRSettings.DepthSubmissionMode.Depth16Bit;
+                    EditorUtility.SetDirty(openXRSettings);
+                    Debug.Log("[VR Fix] Fixed: Configured OpenXR Android to SinglePassInstanced (Multiview), Depth 16-Bit submission, and Prioritize Input Polling.");
+                    requiresSave = true;
+                }
+
+                // Disable VulkanOffscreenSwapchainNoMainDisplay if present
+                try
+                {
+                    var editorSettingsType = System.Type.GetType("UnityEditor.XR.OpenXR.OpenXREditorSettings, Unity.XR.OpenXR.Editor");
+                    if (editorSettingsType != null)
+                    {
+                        var instProp = editorSettingsType.GetProperty("Instance", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                        var inst = instProp?.GetValue(null);
+                        if (inst != null)
+                        {
+                            var noMainDisplayProp = editorSettingsType.GetProperty("VulkanOffscreenSwapchainNoMainDisplay");
+                            if (noMainDisplayProp != null && (bool)noMainDisplayProp.GetValue(inst))
+                            {
+                                noMainDisplayProp.SetValue(inst, false);
+                                EditorUtility.SetDirty((UnityEngine.Object)inst);
+                                Debug.Log("[VR Fix] Fixed: Disabled Vulkan Offscreen Swapchain No Main Display (restored headset display rendering).");
+                                requiresSave = true;
+                            }
+                        }
+                    }
+                }
+                catch { }
             }
         }
         else
@@ -110,20 +147,26 @@ public class FixVRBlackScreen
             Debug.Log("[VR Fix] Fixed: Minimum Android API Level set to 29 (Meta Quest requirement).");
         }
 
-        // 4. Graphics API Enforcement
+        // 4. Graphics API Enforcement (Vulkan required for Meta Quest OpenXR)
         GraphicsDeviceType[] currentApis = PlayerSettings.GetGraphicsAPIs(BuildTarget.Android);
-        bool hasVulkan = false;
-        bool hasGLES3 = false;
-        foreach (var api in currentApis)
-        {
-            if (api == GraphicsDeviceType.Vulkan) hasVulkan = true;
-            if (api == GraphicsDeviceType.OpenGLES3) hasGLES3 = true;
-        }
-
-        if (!hasVulkan && !hasGLES3)
+        bool vulkanFirst = (currentApis.Length > 0 && currentApis[0] == GraphicsDeviceType.Vulkan);
+        if (!vulkanFirst)
         {
             PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { GraphicsDeviceType.Vulkan, GraphicsDeviceType.OpenGLES3 });
-            Debug.Log("[VR Fix] Fixed: Set Android Graphics API to Vulkan with OpenGLES3 fallback.");
+            Debug.Log("[VR Fix] Fixed: Set Android Graphics API to Vulkan (primary) with OpenGLES3 fallback.");
+            requiresSave = true;
+        }
+
+        // Set Screen Orientation to Landscape Left (Meta Quest requirement)
+        if (PlayerSettings.defaultInterfaceOrientation != UIOrientation.LandscapeLeft)
+        {
+            PlayerSettings.defaultInterfaceOrientation = UIOrientation.LandscapeLeft;
+            PlayerSettings.allowedAutorotateToPortrait = false;
+            PlayerSettings.allowedAutorotateToPortraitUpsideDown = false;
+            PlayerSettings.allowedAutorotateToLandscapeRight = false;
+            PlayerSettings.allowedAutorotateToLandscapeLeft = true;
+            Debug.Log("[VR Fix] Fixed: Set Screen Orientation to Landscape Left.");
+            requiresSave = true;
         }
 
         // 5. URP Render Scale & MSAA Check
@@ -182,10 +225,10 @@ public class FixVRBlackScreen
         if (mainCam != null)
         {
             // Fix Flickering (Z-Fighting) by setting near clip plane to a VR safe value
-            if (mainCam.nearClipPlane < 0.1f)
+            if (mainCam.nearClipPlane < 0.15f)
             {
-                mainCam.nearClipPlane = 0.1f;
-                Debug.Log("[VR Fix] Fixed: Increased Main Camera Near Clip Plane to 0.1 to prevent Z-fighting and station flickering.");
+                mainCam.nearClipPlane = 0.15f;
+                Debug.Log("[VR Fix] Fixed: Increased Main Camera Near Clip Plane to 0.15 to prevent Z-fighting and station flickering.");
                 EditorUtility.SetDirty(mainCam);
             }
 

@@ -1164,7 +1164,7 @@ public class SimpleFPPController : MonoBehaviour
     }
 
     private void HandleCursorLock()
-    {
+    { 
         if (lockCursorOnDesktop && !isVRActive)
         {
             if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
